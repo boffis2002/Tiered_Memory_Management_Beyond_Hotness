@@ -131,31 +131,30 @@ of on our hardware and, if time permits, on PolyRack.}
         expander, or a remote NUMA node emulating it); PolyRack only as an
         extension.
   \item \emph{Inputs:} the hot/cold microbenchmark of~\cite{liu2025tiered}
-        and GAPBS graph workloads (starting from \texttt{bc-urand}), run with
+        and workloads given by Professor Babak Falsafi, run with
         10--90\% of their RSS in the slow tier.
-  \item \emph{What we can change:} software only, i.e., the initial placement
+  \item \emph{What we can change:} workloads and software, i.e., the initial placement
         of objects; the baselines' page-migration policies are used as they
-        are. Hardware, workload algorithms and their inputs are fixed.
+        are.
 \end{itemize}
 
-\textbf{Success criteria.} The metric is the execution-time slowdown with
-respect to All-on-DRAM (lower is better), plus the Pearson correlation between
-predicted and measured slowdown for the metric question. Baselines are NoTier
-(first-touch, no migrations) and the latest hotness-based systems TPP, NBT,
-Nomad and Colloid, all run with the same fast-tier capacity. Since our hardware
-differs from the paper's, the reproduction is successful if the
-\emph{qualitative} trends hold (ranking of the policies and sign of the
+\textbf{Success criteria.} 
+The metrics used are the execution time on fixed workloads and the Pearson correlation between predicted and measured slowdowns.
+We aim to get better results than NoTier and hotness-based systems (SOTA).
+All the measurements are going to be taken with respect to All-on-DRAM (all in the fast tier), the lowest slowdown achievable on this hardware.
+Since our hardware
+differs from the paper’s, the reproduction is successful if the
+qualitative trends hold (ranking of the policies and sign of the
 improvements), not the exact numbers.
 
 \subsection{Overview of the proposed solution~\cite{liu2025tiered}}
-\textbf{AOL.} The paper first shows (via an offline study of 56 workloads)
-that the ratio of LLC stall cycles to total cycles, $P = s_{\text{LLC}}/c$, is
-correlated with the slowdown on the slow tier, but overestimates it for
-high-MLP workloads. It then defines $\text{AOL} = \text{Latency}/\text{MLP}$,
-computed from offcore performance counters, and models the slowdown as
-$S = P \times K$ with a correction factor $K = f(\text{AOL}) =
-1/(a + b/\text{AOL})$. The constants $a,b$ depend only on the hardware and can
-be calibrated with microbenchmarks; the Pearson correlation between predicted
+\textbf{AOL.} 
+The paper proposes AOL (Amortized Offcore Latency) as the new metric.
+The research shows that measuring the ratio of LLC stall cycles and total cycles of execution is not enough precise ($P$); it tends to overestimate
+workloads with high MLP.
+The researchers came up with AOL, defined as $\text{AOL} = \text{Latency}/\text{MLP}$, computed using counters from intel PMU, and models the slowdown to $S = P \times K$, where $K$ is a function of AOL.\\
+$K = f(\text{AOL}) = 1/(a + b/\text{AOL})$. The constants $a,b$ depend only on the hardware and can
+be calibrated with microbenchmarks; this way the Pearson correlation between predicted
 and measured slowdown improves from 0.869 to 0.951.
 
 \textbf{SOAR} (Static Object Allocation based on Ranking) profiles an
