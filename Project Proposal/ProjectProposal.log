@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2026.9.29)  12 OCT 2026 14:41
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex 2026.9.29)  12 OCT 2026 14:48
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -473,6 +473,21 @@ LaTeX Font Info:    Trying to load font information for T1+pcr on input line 120
  (/usr/local/texlive/2025/texmf-dist/tex/latex/psnfss/t1pcr.fd
 File: t1pcr.fd 2001/06/04 font definitions for T1/pcr.
 )
+Underfull \hbox (badness 2707) in paragraph at lines 151--159
+[]\T1/ptm/b/n/10 AOL. \T1/ptm/m/n/10 The pa-per pro-poses AOL (Amor-tized Of-f-core
+ []
+
+
+Underfull \hbox (badness 2478) in paragraph at lines 151--159
+\T1/ptm/m/n/10 La-tency) as the new met-ric. The re-search shows that
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 151--159
+
+ []
+
+
 
 
 
@@ -514,13 +529,13 @@ L3 programming layer <2025-12-29>
 Here is how much of TeX's memory you used:
  14806 strings out of 469385
  305071 string characters out of 5465369
- 693716 words of memory out of 5000000
+ 693496 words of memory out of 5000000
  41615 multiletter control sequences out of 15000+600000
  734671 words of font info for 144 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
  84i,18n,87p,581b,753s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy5.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/urw/courier/ucrr8a.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/urw/times/utmbi8a.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/local/texlive/2025/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on ProjectProposal.pdf (4 pages, 169301 bytes).
+Output written on ProjectProposal.pdf (4 pages, 169299 bytes).
 PDF statistics:
  91 PDF objects out of 1000 (max. 8388607)
  56 compressed objects within 1 object stream

@@ -100,9 +100,9 @@ This breaks the assumption of the model above, where every access pays the
 full latency of its tier.
 
 Let us consider two different data structures of the same size that need to be repeatedly scanned: an array and a linked list.
-When scanning an array, we already know the address of each element of the array, but in a linked list, we need to read element x to be able to reach element x+1.
-Suppose we perform this scan on a tiered memory system with an OoO processor: the accesses to the array can be parallelized ($MLP \ge 1$), while the accesses to the linked list must be serialized ($MLP = 1$).
-Let us suppose that hotness is measured over a fixed period of time. We can now imagine that the array has been accessed many times, making it hotter, so it gets placed in the fast tier.
+When scanning an array, we already know the address of each element of the array, but in a linked list, we need to read element $x$ to be able to reach element $x+1$.
+Suppose we perform this scan on a tiered memory system with an OoO processor: the accesses to the array can be parallelized ($\text{MLP} > 1$), while the accesses to the linked list must be serialized ($\text{MLP} = 1$).
+Let us suppose that hotness is measured over a fixed period of time. We can now imagine that the array has been accessed many more times, because the core rarely stalls while scanning it. This makes it hotter, so it gets placed in the fast tier.
 This decision might help us reach the array faster, but it drastically increases the time needed to access the linked list.
 Swapping the positions leads us to a lower total slowdown.
 
@@ -118,12 +118,13 @@ thread), they underperform even a naive \emph{Cold-on-DRAM} placement, and
 fall behind first-touch allocation without migrations (NoTier) by
 12--14\%~\cite[Fig.~1]{liu2025tiered}. On real workloads such as
 \texttt{bc-urand} (GAPBS betweenness centrality on a uniform random graph),
-they can be up to 217\% slower than NoTier~\cite[Fig.~4]{liu2025tiered}.
+Nomad can be up to 217\% slower than NoTier~\cite[Fig.~4]{liu2025tiered}.
 
 \subsection{Problem definition, scope and success criteria}
 \textbf{Problem.} \emph{Reduce the slowdown of memory-intensive workloads on
-tiered memory systems, by reproducing and validating the AOL-based approach
-of on our hardware and, if time permits, on PolyRack.}
+tiered memory systems beyond hotness-based state-of-the-art systems, by
+reproducing and validating the AOL-based approach of~\cite{liu2025tiered} on
+our hardware and, if time permits, on PolyRack.}
 
 \textbf{Scope.}
 \begin{itemize}
@@ -140,7 +141,7 @@ of on our hardware and, if time permits, on PolyRack.}
 
 \textbf{Success criteria.} 
 The metrics used are the execution time on fixed workloads and the Pearson correlation between predicted and measured slowdowns.
-We aim to get better results than NoTier and hotness-based systems (SOTA).
+We aim to get better results than NoTier and hotness-based systems (SOTA) at the same DRAM capacity.
 All the measurements are going to be taken with respect to All-on-DRAM (all in the fast tier), the lowest slowdown achievable on this hardware.
 Since our hardware
 differs from the paper’s, the reproduction is successful if the
@@ -150,9 +151,9 @@ improvements), not the exact numbers.
 \subsection{Overview of the proposed solution~\cite{liu2025tiered}}
 \textbf{AOL.} 
 The paper proposes AOL (Amortized Offcore Latency) as the new metric.
-The research shows that measuring the ratio of LLC stall cycles and total cycles of execution is not enough precise ($P$); it tends to overestimate
-workloads with high MLP.
-The researchers came up with AOL, defined as $\text{AOL} = \text{Latency}/\text{MLP}$, computed using counters from intel PMU, and models the slowdown to $S = P \times K$, where $K$ is a function of AOL.\\
+The research shows that measuring the ratio of LLC stall cycles to total cycles of execution ($P$) is not precise enough; it tends to overestimate
+the slowdown of workloads with high MLP.
+The researchers came up with AOL, defined as $\text{AOL} = \text{Latency}/\text{MLP}$ and computed using counters from the Intel PMU, and model the slowdown as $S = P \times K$, where $K$ is a function of AOL:
 $K = f(\text{AOL}) = 1/(a + b/\text{AOL})$. The constants $a,b$ depend only on the hardware and can
 be calibrated with microbenchmarks; this way the Pearson correlation between predicted
 and measured slowdown improves from 0.869 to 0.951.
