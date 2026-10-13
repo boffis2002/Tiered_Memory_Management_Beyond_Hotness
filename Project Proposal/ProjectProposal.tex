@@ -10,8 +10,6 @@
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric}
 \usepackage{url}
 
-% Inline TODO marker -- remove before submission
-\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
 
 \begin{document}
 
@@ -115,9 +113,9 @@ No. SOTA tiering systems such as TPP, Nomad, Linux NUMA Balancing Tiering
 sequential, high-MLP ``hot'' thread and one pointer-chasing, low-MLP ``cold''
 thread), they underperform even a naive \emph{Cold-on-DRAM} placement, and
 fall behind first-touch allocation without migrations (NoTier) by
-12--14\%~\cite[Fig.~1]{liu2025tiered}. On real workloads such as
+12--14\%~\cite{liu2025tiered}. On real workloads such as
 \texttt{bc-urand} (GAPBS betweenness centrality on a uniform random graph),
-Nomad can be up to 217\% slower than NoTier~\cite[Fig.~4]{liu2025tiered}.
+Nomad can be up to 217\% slower than NoTier~\cite{liu2025tiered}.
 
 \subsection{Problem definition, scope and success criteria}
 \textbf{Problem.} \emph{Reduce the slowdown of memory-intensive workloads on
@@ -131,9 +129,9 @@ our hardware and, if time permits, on PolyRack.}
         expander, or a remote NUMA node emulating it); PolyRack only as an
         extension.
   \item \emph{Inputs:} the hot/cold microbenchmark of~\cite{liu2025tiered}
-        and workloads given by Professor Babak Falsafi, run with
+        and workloads provided by the teaching team, run with
         10--90\% of their RSS in the slow tier.
-  \item \emph{What we can change:} workloads and software, i.e., the initial placement
+  \item \emph{What we can change:} the initial placement
         of objects; the baselines' page-migration policies are used as they
         are.
 \end{itemize}
@@ -149,7 +147,6 @@ improvements), not the exact numbers.
 
 \subsection{Overview of the proposed solution~\cite{liu2025tiered}}
 \textbf{AOL.} 
-The paper proposes AOL (Amortized Offcore Latency) as the new metric.
 The research shows that measuring the ratio of LLC stall cycles to total cycles of execution ($P$) is not precise enough; it tends to overestimate
 the slowdown of workloads with high MLP.
 The researchers came up with AOL, defined as $\text{AOL} = \text{Latency}/\text{MLP}$ and computed using counters from the Intel PMU, and model the slowdown as $S = P \times K$, where $K$ is a function of AOL:
@@ -227,7 +224,7 @@ avoids most migrations.}
   \item \textbf{Alternative (H1$'$):} SOTA systems seem slower because of the cost
         of their migrations, not because they misplace data. 
         To test this: run NoTier and the SOTA systems on the same benchmark and
-        record the number of migrated pages. If no migrations perform
+        record the number of migrated pages. If the static placements perform
         alike but SOTA is slower than NoTier, H1$'$ holds.
 \end{itemize}
 
@@ -238,7 +235,7 @@ avoids most migrations.}
         better with the effective slowdown than $P$ alone and than hotness
         (sampled access counts).
   \item \textbf{Insight (I2):} the average stall cycles per LLC miss vary by
-        up to 4$\times$ across workloads: MLP amortizes
+        up to 4$\times$ across workloads~\cite{liu2025tiered}: MLP amortizes
         the latency, so a predictor that ignores it (LLC stalls/cycle, $P$)
         overestimates the slowdown of high-MLP workloads.
   \item \textbf{Test (E2):} for each workload, measure the slowdown on the
@@ -269,7 +266,7 @@ avoids most migrations.}
   \item \textbf{Hypothesis (H4):} AOL-based placement (SOAR) reduces the
         slowdown on PolyRack with respect to its default memory management.
   \item \textbf{Insight (I4):} PolyRack disaggregates memory into dedicated
-        memory servers reached through a CX, which creates a
+        memory servers reached through CXL, which creates a
         fast/slow memory hierarchy similar to a tiered server.
   \item \textbf{Test (E4):} run the same workloads on PolyRack with and
         without SOAR, and compare against the traditional tiered server.
@@ -291,16 +288,18 @@ fast/slow latencies). We will use the open-source implementation of SOAR
 (\url{https://github.com/MoatLab/SoarAlto}), Linux \texttt{perf} and the
 offcore/LLC performance counters needed to compute $P$ and AOL, and
 \texttt{numactl}/cgroups to control the fast/slow-tier ratio.
-\todo{Confirm server access, CPU/kernel version, CXL vs.\ NUMA emulation, and
-whether experiments run on bare metal or in a VM.}
+We assume that the teaching team provides access to a recent Intel server
+(exposing the offcore counters needed for AOL) with root privileges, so that
+we can read hardware counters, bind memory to NUMA nodes and tune the uncore
+frequency; experiments will run on bare metal to avoid virtualization noise in
+the measurements.
 
 \subsection{Workloads}
-We will start from \texttt{bc-urand} and other graph workloads from the GAP
-Benchmark Suite (GAPBS), which stress tiered memory with irregular accesses,
-plus the hot/cold microbenchmark of Q1. Time permitting, we will add workloads
-from the other categories used in the paper (machine learning, caching, HPC).
-\todo{Agree on the final workload list with the TA (and on PolyRack's home
-workloads).}
+We will use the workloads provided by the teaching team, including the home
+workloads of PolyRack for Q4, together with the hot/cold microbenchmark of Q1.
+As a starting point we will use \texttt{bc-urand} and other graph workloads
+from the GAP Benchmark Suite (GAPBS), which stress tiered memory with
+irregular accesses and allow a direct comparison with~\cite{liu2025tiered}.
 
 \subsection{Baselines and metrics}
 Baselines: All-on-DRAM (upper bound), NoTier (first-touch, no migrations),
@@ -325,12 +324,12 @@ By the end of the semester we want to:
 with SOAR running
       \item confirm or refute H1--H3 (and the
 alternatives H1$'$, H2$'$) on the given hardware
-      \item and if time permits, provide a
+      \item if time permits, provide a
 first evaluation of H4 on PolyRack
 \end{itemize}
 
 \subsection{Expected results}
-We expect to end up with results similar to the graph (Fig.~\ref{fig:expected}), where first we can show that SOTA systems might perform even worse than NoTier, and second to show that SOAR is better than both NoTier and all SOTA placement systems.
+We expect to end up with results similar to the graph (Fig.~\ref{fig:expected}), where we can show, first, that SOTA systems might perform even worse than NoTier, and, second, that SOAR is better than both NoTier and all SOTA placement systems.
 
 We will also show the
 predicted-vs.-measured slowdown scatter plot for $P$, $P\times K$, hotness
@@ -363,24 +362,18 @@ slowdown lower than hotness-based SOTA and NoTier across slow-tier ratios.}
 Each milestone lists its deadline and the follow-up question it answers.
 \begin{enumerate}
   \item \textbf{Oct.~13:} proposal and presentation.
-        \emph{Follow-up:} which servers, CXL device or NUMA emulation, and
-        workloads are available to us.
   \item \textbf{Oct.~23:} environment ready: tiered (or NUMA-emulated)
         memory, SOAR code and baselines built, counters for $P$ and AOL
         readable with \texttt{perf}.
-        \emph{Follow-up:} does our CPU expose the offcore counters AOL needs?
-  \item \textbf{Oct.~30:} E1 and E1$'$ done.
+        \emph{Follow-up:} do the offcore counters give stable AOL readings on our setup?
+  \item \textbf{Oct.~30:} E1 done, including the H1$'$ test.
         \emph{Follow-up:} does H1 hold on our hardware, or H1$'$?
   \item \textbf{Nov.~12 (status report):} E2 done ($K$ calibrated, Pearson
         coefficients of $P$, $P\times K$, hotness and H2$'$); first SOAR
         results on \texttt{bc-urand}.
-        \emph{Follow-up:} which metric should drive SOAR on our platform?
   \item \textbf{Nov.~27:} E3 done on all selected workloads and slow-tier
         ratios.
-        \emph{Follow-up:} on which configurations does SOAR lose, and why?
   \item \textbf{Dec.~4:} (if time permits) E4 on PolyRack.
-        \emph{Follow-up:} can AOL be measured and calibrated on PolyRack's
-        memory path?
   \item \textbf{Dec.~10 / Dec.~17 / Dec.~20:} poster, poster session and
         final report.
 \end{enumerate}
