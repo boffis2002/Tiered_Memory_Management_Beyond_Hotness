@@ -1,6 +1,6 @@
 # Fdb version 4
-["pdflatex"] 1791809318.74559 "/Users/sergioboffi/EPFL/Advanced Multiprocessor Architecture/Project/Tiered_Memory_Management_Beyond_Hotness/Project Proposal/ProjectProposal.tex" "ProjectProposal.pdf" "ProjectProposal" 1791809319.52248 0
-  "/Users/sergioboffi/EPFL/Advanced Multiprocessor Architecture/Project/Tiered_Memory_Management_Beyond_Hotness/Project Proposal/ProjectProposal.tex" 1791809317.82403 23483 2ae437cadf1bf4669ccd4de24a8ba0d8 ""
+["pdflatex"] 1791901161.52199 "/Users/sergioboffi/EPFL/Advanced Multiprocessor Architecture/Project/Tiered_Memory_Management_Beyond_Hotness/Project Proposal/ProjectProposal.tex" "ProjectProposal.pdf" "ProjectProposal" 1791901162.2072 0
+  "/Users/sergioboffi/EPFL/Advanced Multiprocessor Architecture/Project/Tiered_Memory_Management_Beyond_Hotness/Project Proposal/ProjectProposal.tex" 1791901161.21774 21156 62c32c263092a2ab158369b37ffea323 ""
   "/usr/local/texlive/2025/texmf-dist/fonts/enc/dvips/base/8r.enc" 1165713224 4850 80dc9bab7f31fb78a000ccfed0e27cab ""
   "/usr/local/texlive/2025/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/local/texlive/2025/texmf-dist/fonts/tfm/adobe/courier/pcrr8r.tfm" 1136768653 1292 bd42be2f344128bff6d35d98474adfe3 ""
@@ -142,8 +142,8 @@
   "/usr/local/texlive/2025/texmf-var/fonts/map/pdftex/updmap/pdftex.map" 1759753885 5467155 19efa205003f9ecad95fbbaa6ff24da1 ""
   "/usr/local/texlive/2025/texmf-var/web2c/pdftex/pdflatex.fmt" 1790700817 3596023 b884e35231eaf6d6a7ede866b32d2af4 ""
   "/usr/local/texlive/2025/texmf.cnf" 1741450484 577 418a7058ec8e006d8704f60ecd22c938 ""
-  "ProjectProposal.aux" 1791809319.46324 4551 16291b9dcbdd65bf96bf29d21593c23c "pdflatex"
-  "ProjectProposal.tex" 1791809317.82403 23483 2ae437cadf1bf4669ccd4de24a8ba0d8 ""
+  "ProjectProposal.aux" 1791901162.14528 4220 61e67f9929be6498a0e600c9e1e73136 "pdflatex"
+  "ProjectProposal.tex" 1791901161.21774 21156 62c32c263092a2ab158369b37ffea323 ""
   (generated)
   "ProjectProposal.aux"
   "ProjectProposal.log"

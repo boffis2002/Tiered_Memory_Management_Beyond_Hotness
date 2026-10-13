@@ -38,14 +38,13 @@ tier (e.g., CXL-attached memory) and typically decide data placement based on
 access frequency (``hotness''). Liu et al.~\cite{liu2025tiered} argue that hot
 data is not necessarily performance-critical, because memory-level parallelism
 (MLP) can hide most of the slow-tier latency of some accesses but not of
-others. They introduce the Amortized Offcore Latency (AOL) metric and build two
-mechanisms on top of it: SOAR, an AOL-guided first-placement policy, and ALTO,
-an AOL-based filter for page migrations. In this project we will reproduce the
-main claims of the paper (hotness is a poor proxy of performance, AOL is a
-better predictor of slowdown, SOAR and ALTO outperform state-of-the-art tiering
-systems) on a traditional server and, if time permits, evaluate whether these
-techniques also improve memory management on the PolyRack disaggregated rack
-architecture~\cite{polyrack}.
+others. They introduce the Amortized Offcore Latency (AOL) metric and build on
+it SOAR, an AOL-guided first-placement policy. In this project we will
+reproduce the main claims of the paper (hotness is a poor proxy of
+performance, AOL is a better predictor of slowdown, SOAR outperforms
+state-of-the-art tiering systems) on a traditional server and, if time
+permits, evaluate whether these techniques also improve memory management on
+the PolyRack disaggregated rack architecture~\cite{polyrack}.
 \end{abstract}
 
 % =====================================================================
@@ -88,7 +87,7 @@ T_{\text{total}} ={}& \underbrace{\alpha\,\beta_{\text{DRAM,hot}}T_{\text{DRAM}}
  + \underbrace{(1-\alpha)(1-\beta_{\text{CXL,hot}})T_{\text{CXL}}}_{\text{accesses to cold data in CXL}}.
 \end{align}
 SOTA tiering systems put hot data into DRAM, and following this model, this means that we decrease $(1-\alpha)\,\beta_{\text{CXL,hot}}T_{\text{CXL}}$ to increase $\alpha\,\beta_{\text{DRAM,hot}}T_{\text{DRAM}}$.
-Since we know that CXL accesses are more costly in terms of latency, this might look like an optimal solution, but the next section shows why this tiering system doesn't always help lower $T_{\text{total}}$.
+Since we know that CXL accesses are more costly in terms of latency, this might look like an optimal solution, but the next section shows why these tiering systems don't always help lower $T_{\text{total}}$.
 
 \subsection{What causes the problem?}
 First, we need to point out that slow-tier accesses and page migrations are expensive in terms of latency (each migration can take several $\mu$s).
@@ -162,8 +161,6 @@ and measured slowdown improves from 0.869 to 0.951.
 application, ranks objects by their AOL-weighted contribution to performance,
 and places the highest-ranked objects in DRAM at allocation time. This yields
 near-optimal first placement and removes the need for most later migrations.
-The paper also proposes ALTO, an AOL-based filter for page migrations; we
-leave it out of scope to focus on placement.
 
 \subsection{Project goals}
 With this project we aim to:
@@ -180,13 +177,11 @@ With this project we aim to:
 \section{Questions, Hypotheses and Tests}
 \label{sec:questions}
 
-The overarching question is: \emph{how can we improve server performance by
-reducing effective memory latency, using metrics better than hotness and
-building better data-placement procedures on top of them?} We break it down
-into the following prioritized questions. For each question we give an
-insight, a hypothesis, the result that would refute it, and the test; where
-the evidence could point elsewhere we also state an alternative hypothesis
-(primed). Questions are ordered by dependency (Fig.~\ref{fig:tree}): a child
+The main question is: how can we improve the performance of tiered systems by reducing total memory latency?
+We split it into 4 subquestions, to divide this problem into steps.
+For each question we give a hypothesis, an insight, and the test; where
+the evidence could point elsewhere we also state an alternative hypothesis.
+Questions are ordered by dependency (Fig.~\ref{fig:tree}): a child
 hypothesis is tested only once its parent has been confirmed.
 
 \begin{figure}[t]
@@ -216,95 +211,72 @@ avoids most migrations.}
 \label{fig:tree}
 \end{figure}
 
-\subsection{Q1: Are hotness metrics really informative?}
-\begin{itemize}
+\subsection{Q1: Can hotness be a faithful metric to measure performance?}
+\begin{itemize} 
+  \item \textbf{Hypothesis (H1):} with the same amount of DRAM, placing the
+        hot, high-MLP data in DRAM shows a higher slowdown than
+        placing the cold, low-MLP data in DRAM.
   \item \textbf{Insight (I1):} out-of-order cores overlap independent misses,
         so high-MLP (often hot) accesses hide most of the slow-tier latency,
         while low-MLP accesses pay all of it.
-  \item \textbf{Hypothesis (H1):} with the same DRAM capacity, placing the
-        hot, high-MLP data in DRAM yields a \emph{higher} slowdown than
-        placing the cold, low-MLP data in DRAM.
-  \item \textbf{Refuted if:} on the microbenchmark, Hot-on-DRAM has a slowdown
-        lower than or equal to Cold-on-DRAM.
   \item \textbf{Test (E1):} reproduce the hot/cold microbenchmark
         (sequential vs.\ pointer-chasing threads, cf.\
-        Fig.~1 of~\cite{liu2025tiered}) with \emph{static} placements
+        Fig.~1 of~\cite{liu2025tiered}) with static placements
         (All-on-DRAM, Hot-on-DRAM, Cold-on-DRAM) and migrations disabled, so
-        that the result depends only on placement and not on migration cost.
-  \item \textbf{Alternative (H1$'$):} SOTA systems lose because of the cost
-        of their migrations, not because they mis-place data. \emph{Test
-        (E1$'$):} run NoTier and the SOTA systems on the same benchmark and
-        record the number of migrated pages. If the static placements perform
+        that the migration costs are not taken into account during these measurements.
+  \item \textbf{Alternative (H1$'$):} SOTA systems seem slower because of the cost
+        of their migrations, not because they misplace data. 
+        To test this: run NoTier and the SOTA systems on the same benchmark and
+        record the number of migrated pages. If no migrations perform
         alike but SOTA is slower than NoTier, H1$'$ holds.
 \end{itemize}
 
 \subsection{Q2: If not, how can a better metric be defined?}
 \begin{itemize}
+  \item \textbf{Hypothesis (H2):} the AOL-corrected predictor $P\times K$,
+        with $K = f(\text{AOL})$, correlates
+        better with the effective slowdown than $P$ alone and than hotness
+        (sampled access counts).
   \item \textbf{Insight (I2):} the average stall cycles per LLC miss vary by
-        up to 4$\times$ across workloads~\cite{liu2025tiered}: MLP amortizes
+        up to 4$\times$ across workloads: MLP amortizes
         the latency, so a predictor that ignores it (LLC stalls/cycle, $P$)
         overestimates the slowdown of high-MLP workloads.
-  \item \textbf{Hypothesis (H2):} the AOL-corrected predictor $P\times K$,
-        with $K = f(\text{AOL})$ fitted empirically on our machine, correlates
-        better with the measured slowdown than $P$ alone and than hotness
-        (sampled access counts).
-  \item \textbf{Refuted if:} the Pearson coefficient of $P\times K$ is not
-        higher than that of $P$ (or of hotness) on our set of workloads.
   \item \textbf{Test (E2):} for each workload, measure the slowdown on the
         slow tier together with the counters for $P$, AOL and access counts;
         calibrate $a,b$ of $K$ with the sequential/pointer-chasing
         microbenchmarks; compare the Pearson coefficients of the three
-        predictors (cf.\ Fig.~2 of~\cite{liu2025tiered}).
+        predictors.
   \item \textbf{Alternative (H2$'$):} a simpler MLP-aware metric, the
         average LLC stalls per LLC miss without a fitted $K$, predicts the
-        slowdown as well as $P\times K$. It is evaluated in the same
-        experiment as E2 at no additional cost.
+        slowdown as well as $P\times K$. It is evaluated in E2 without the need for any other test.
 \end{itemize}
 
 \subsection{Q3: With this metric, can we improve first data placement (SOAR)?}
 \begin{itemize}
-  \item \textbf{Insight (I3):} if the metric identifies performance-critical
-        objects, placing them in DRAM at allocation time avoids both
-        mis-placement and later migrations.
   \item \textbf{Hypothesis (H3):} SOAR achieves a lower slowdown than NoTier
         and every SOTA system at the same fast-tier capacity.
-  \item \textbf{Refuted if:} NoTier or a SOTA system has an equal or lower
-        slowdown (beyond run-to-run variance) in the majority of the
-        (workload, slow-tier ratio) configurations.
+  \item \textbf{Insight (I3):} if SOAR finds critical
+        objects, it places them in DRAM at the beginning (first placement).
+        Having optimal first allocations allows us to avoid unnecessary migrations during execution.
   \item \textbf{Test (E3):} compare the slowdown of SOAR vs.\ NoTier, TPP,
         NBT, Nomad and Colloid on the selected workloads, at 10--90\%
-        slow-tier ratios (cf.\ Fig.~4 and Table~4 of~\cite{liu2025tiered}).
+        slow-tier ratios.
+
 \end{itemize}
 
 \subsection{Q4: Can these elements improve PolyRack?}
 \begin{itemize}
-  \item \textbf{Insight (I4):} PolyRack disaggregates memory into dedicated
-        memory servers reached through a CXL-class fabric, which creates a
-        fast/slow memory hierarchy similar to a tiered server.
   \item \textbf{Hypothesis (H4):} AOL-based placement (SOAR) reduces the
         slowdown on PolyRack with respect to its default memory management.
-  \item \textbf{Refuted if:} no reduction beyond run-to-run variance, after
-        recalibrating $K$ for PolyRack.
+  \item \textbf{Insight (I4):} PolyRack disaggregates memory into dedicated
+        memory servers reached through a CX, which creates a
+        fast/slow memory hierarchy similar to a tiered server.
   \item \textbf{Test (E4):} run the same workloads on PolyRack with and
         without SOAR, and compare against the traditional tiered server.
-        Tested only if H3 holds.
+       
+
 \end{itemize}
 
-\subsection{Handling failed hypotheses}
-A refuted hypothesis is an anomaly that we analyze before moving on:
-\begin{itemize}
-  \item \emph{H1 fails:} our slow tier may hide latency differently (e.g.,
-        lower latency ratio, more effective prefetching). We sweep the
-        slow-tier latency (uncore frequency) to find whether the effect
-        appears; if H1$'$ holds instead, we skip Q2 and evaluate SOAR
-        directly, since it avoids most migrations.
-  \item \emph{H2 fails:} we check whether $K$ fitted on our hardware has the
-        same shape as in the paper, and use H2$'$ (if it holds) as the metric
-        driving SOAR.
-  \item \emph{H3 fails:} we analyze per workload which objects SOAR ranks
-        incorrectly, and test whether recalibrating $K$ for our platform
-        fixes the gap.
-\end{itemize}
 
 % =====================================================================
 \section{Evaluation Methodology}
@@ -347,18 +319,20 @@ deviation.
 \label{sec:deliverable}
 
 \subsection{Concrete goals}
-By the end of the semester we want to (1) have a working tiered-memory setup
-with the baselines and SOAR running, (2) confirm or refute H1--H3 (and the
-alternatives H1$'$, H2$'$) on our hardware, and (3) if time permits, provide a
-first evaluation of H4 on PolyRack.
+By the end of the semester we want to:
+\begin{itemize}
+      \item have a working tiered-memory setup
+with SOAR running
+      \item confirm or refute H1--H3 (and the
+alternatives H1$'$, H2$'$) on the given hardware
+      \item and if time permits, provide a
+first evaluation of H4 on PolyRack
+\end{itemize}
 
 \subsection{Expected results}
-Our key figure (Fig.~\ref{fig:expected}) will plot the slowdown w.r.t.\
-All-on-DRAM (Y-axis) as a function of the fraction of the working set placed
-in the slow tier (X-axis), for NoTier, a hotness-based SOTA system and SOAR.
-We expect slowdown to grow with the slow-tier ratio for all policies, with
-SOTA sometimes worse than NoTier (due to useless migrations) and SOAR
-consistently below both. We will also show the
+We expect to end up with results similar to the graph (Fig.~\ref{fig:expected}), where first we can show that SOTA systems might perform even worse than NoTier, and second to show that SOAR is better than both NoTier and all SOTA placement systems.
+
+We will also show the
 predicted-vs.-measured slowdown scatter plot for $P$, $P\times K$, hotness
 and stalls/miss (Q2).
 
@@ -390,7 +364,7 @@ Each milestone lists its deadline and the follow-up question it answers.
 \begin{enumerate}
   \item \textbf{Oct.~13:} proposal and presentation.
         \emph{Follow-up:} which servers, CXL device or NUMA emulation, and
-        workloads are available to us (Sec.~\ref{sec:open})?
+        workloads are available to us.
   \item \textbf{Oct.~23:} environment ready: tiered (or NUMA-emulated)
         memory, SOAR code and baselines built, counters for $P$ and AOL
         readable with \texttt{perf}.
@@ -411,17 +385,6 @@ Each milestone lists its deadline and the follow-up question it answers.
         final report.
 \end{enumerate}
 
-% =====================================================================
-\section{Open Questions for the Teaching Team}
-\label{sec:open}
-\begin{enumerate}
-  \item Will we test AOL/SOAR directly on PolyRack, or on a traditional
-        server beforehand? (Our plan assumes the latter.)
-  \item Which home workloads will we work with?
-  \item How does access to the servers work?
-  \item How will we set up our experiments (programming language, bare metal
-        vs.\ VM, etc.)?
-\end{enumerate}
 
 % =====================================================================
 \begin{thebibliography}{9}
