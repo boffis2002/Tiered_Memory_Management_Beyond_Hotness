@@ -87,6 +87,13 @@ T_{\text{total}} ={}& \underbrace{\alpha\,\beta_{\text{DRAM,hot}}T_{\text{DRAM}}
 SOTA tiering systems put hot data into DRAM, and following this model, this means that we decrease $(1-\alpha)\,\beta_{\text{CXL,hot}}T_{\text{CXL}}$ to increase $\alpha\,\beta_{\text{DRAM,hot}}T_{\text{DRAM}}$.
 Since we know that CXL accesses are more costly in terms of latency, this might look like an optimal solution, but the next section shows why these tiering systems don't always help lower $T_{\text{total}}$.
 
+Note that the second equation is the same quantity as the first, only split by
+hotness: the split does not change $T_{\text{total}}$, but it shows which term
+SOTA systems act on. Moreover, $T_{\text{total}}$ is an \emph{average access
+latency}, not the application slowdown: the slowdown depends on how much of
+this latency is actually exposed as stall cycles, which is what the next
+section discusses and what the AOL-based predictor described below estimates.
+
 \subsection{What causes the problem?}
 First, we need to point out that slow-tier accesses and page migrations are expensive in terms of latency (each migration can take several $\mu$s).
 To reduce the slowdown, we need to find a way to decide whether a page should migrate or whether an object should be placed in the fast or the slow tier.
@@ -137,9 +144,9 @@ our hardware and, if time permits, on PolyRack.}
 \end{itemize}
 
 \textbf{Success criteria.} 
-The metrics used are the execution time on fixed workloads and the Pearson correlation between predicted and measured slowdowns.
+The metrics used are the execution time on fixed workloads and, for the predictors, the Pearson correlation and the mean absolute error (MAE) between predicted and measured slowdowns: a high correlation alone does not exclude a systematic bias in the predictions.
 We aim to get better results than NoTier and hotness-based systems (SOTA) at the same DRAM capacity.
-All the measurements are going to be taken with respect to All-on-DRAM (all in the fast tier), the lowest slowdown achievable on this hardware.
+All the measurements are going to be taken with respect to All-on-DRAM (all in the fast tier), which serves as the zero-slowdown baseline for measuring the slowdown introduced by tiered-memory placement.
 Since our hardware
 differs from the paper’s, the reproduction is successful if the
 qualitative trends hold (ranking of the policies and sign of the
@@ -241,8 +248,8 @@ avoids most migrations.}
   \item \textbf{Test (E2):} for each workload, measure the slowdown on the
         slow tier together with the counters for $P$, AOL and access counts;
         calibrate $a,b$ of $K$ with the sequential/pointer-chasing
-        microbenchmarks; compare the Pearson coefficients of the three
-        predictors.
+        microbenchmarks; compare the Pearson coefficients and the MAE of the
+        three predictors on the workloads, which are not used for calibration.
   \item \textbf{Alternative (H2$'$):} a simpler MLP-aware metric, the
         average LLC stalls per LLC miss without a fitted $K$, predicts the
         slowdown as well as $P\times K$. It is evaluated in E2 without the need for any other test.
@@ -305,10 +312,13 @@ irregular accesses and allow a direct comparison with~\cite{liu2025tiered}.
 Baselines: All-on-DRAM (upper bound), NoTier (first-touch, no migrations),
 and the hotness-based SOTA systems TPP, NBT, Nomad and Colloid.
 Metrics: slowdown relative to All-on-DRAM (lower is better), Pearson
-correlation between predicted and measured slowdown, AOL and average memory
-latency, and migration traffic (number of page promotions/demotions), all
-measured across several fast/slow-tier ratios (e.g., 10--90\% of the
-workload's RSS in the slow tier). Every configuration is run at least three
+correlation and MAE between predicted and measured slowdown, AOL and average
+memory latency, and migration traffic (number of page promotions/demotions),
+all measured across several fast/slow-tier ratios (e.g., 10--90\% of the
+workload's RSS in the slow tier). A slow-tier ratio of $x\%$ means that the
+DRAM capacity available to the workload is capped at $(100-x)\%$ of its RSS
+(e.g., via cgroups), identically for every policy; since policies may migrate
+pages, we also record the actual DRAM and slow-tier occupancy during each run. Every configuration is run at least three
 times; we report mean and standard deviation, and consider two policies
 different only when their means differ by more than the run-to-run standard
 deviation.
