@@ -1,0 +1,167 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{url}
+
+% Visible placeholder: remove every \todo before submitting.
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\title{Tiered Memory Management Beyond Hotness\\
+\large CS-471: Project Status Report}
+
+\author{
+Mayeul Besnard\\
+EPFL\\
+\texttt{mayeul.besnard@epfl.ch}
+\and
+Sergio Boffi\\
+EPFL\\
+\texttt{sergio.boffi@epfl.ch}
+}
+
+\date{November 12, 2026}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+% =====================================================================
+\section{Research Problem}
+\todo{Remind the problem in a few lines: placement based on hotness ignores
+memory-level parallelism, and the goal of reproducing AOL and SOAR.}
+
+\todo{State whether the main focus has changed since the proposal.}
+
+% =====================================================================
+\section{Questions, Hypotheses, and Tests}
+
+\subsection{Methodology and Testing Environment Updates}
+\todo{Machine actually used and how it differs from the assumptions of the
+proposal and from the paper.}
+
+\todo{Changes to the methodology: counters used, measurement procedure, how the
+slow tier is emulated.}
+
+\subsection{Current Status of Research Questions}
+
+\subsubsection{Q1: Can hotness be a faithful metric to measure performance?}
+\textbf{Insight:} \todo{I1 from the proposal.}
+
+\textbf{Experiment:} \todo{E1, and the test of H1$'$.}
+
+\textbf{Status:} \todo{Done, partial or not started.}
+
+\subsubsection{Q2: If not, how can a better metric be defined?}
+\textbf{Insight:} \todo{I2 from the proposal.}
+
+\textbf{Experiment:} \todo{E2, and the evaluation of H2$'$.}
+
+\textbf{Status:} \todo{Done, partial or not started.}
+
+\subsubsection{Q3: With this metric, can we improve first data placement (SOAR)?}
+\textbf{Insight:} \todo{I3 from the proposal.}
+
+\textbf{Experiment:} \todo{E3.}
+
+\textbf{Status:} \todo{Done, partial or not started.}
+
+\subsubsection{Q4: Can these elements improve PolyRack?}
+\textbf{Insight:} \todo{I4 from the proposal.}
+
+\textbf{Experiment:} \todo{E4.}
+
+\textbf{Status:} \todo{Done, partial, not started, or dropped.}
+
+\subsection{Anomalies and Updates to the Hypothesis Tree}
+\todo{Any anomaly observed, and whether the hypothesis tree changes.
+Include the updated figure if it does.}
+
+% =====================================================================
+\section{Progress, Results, and Analysis}
+
+\subsection{Experimental Setup}
+\todo{What has been brought up and verified on the machine.}
+
+\subsection{E1: Hotness versus Criticality}
+\todo{Configurations, number of runs, results and conclusion on H1.}
+
+\begin{figure}[h]
+\centering
+\fbox{\parbox[c][4cm][c]{0.7\linewidth}{\centering \todo{E1 plot}}}
+\caption{\todo{Caption.}}
+\label{fig:e1}
+\end{figure}
+
+\subsection{E2: Slowdown Predictors (Preliminary)}
+\todo{Calibration of $a,b$ and comparison of the predictors.}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Predictor & Pearson & MAE \\
+\midrule
+$P$ & \todo{--} & \todo{--} \\
+$P \times K$ & \todo{--} & \todo{--} \\
+Stalls per miss (H2$'$) & \todo{--} & \todo{--} \\
+Hotness & \todo{--} & \todo{--} \\
+\bottomrule
+\end{tabular}
+\caption{\todo{Caption.}}
+\label{tab:e2}
+\end{table}
+
+\subsection{SOAR: Feasibility}
+\todo{What the authors' artifact requires, what is needed to run it on our
+machine, and any first result.}
+
+% =====================================================================
+\section{Challenges}
+
+\subsection{Hardware Differences}
+\todo{Challenges coming from the CPU and its counters.}
+
+\subsection{Tiered Memory Emulation and Baselines}
+\todo{Challenges with the slow tier, memory tiers and custom kernels.}
+
+\subsection{Authors' Artifact}
+\todo{Challenges in porting the code.}
+
+\subsection{Help Needed from the Teaching Team}
+\todo{Concrete requests.}
+
+% =====================================================================
+\section{Plan}
+\todo{Say whether the project is on schedule with respect to the proposal.}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+Date & Milestone & Status \\
+\midrule
+\todo{date} & \todo{E2 completed} & \todo{--} \\
+\todo{date} & \todo{SOAR results} & \todo{--} \\
+Nov.~27 & \todo{E3 on selected workloads and ratios} & \todo{--} \\
+Dec.~4 & \todo{(if time permits) E4 on PolyRack} & \todo{--} \\
+Dec.~10 & Poster deadline & \\
+Dec.~17 & Poster session & \\
+Dec.~20 & Final report deadline & \\
+\bottomrule
+\end{tabular}
+\caption{Updated milestones.}
+\label{tab:plan}
+\end{table}
+
+\todo{Division of the work between the team members.}
+
+\end{document}
