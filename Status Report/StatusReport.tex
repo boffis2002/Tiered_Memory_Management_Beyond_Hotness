@@ -36,10 +36,33 @@ EPFL\\
 
 % =====================================================================
 \section{Research Problem}
-\todo{Remind the problem in a few lines: placement based on hotness ignores
-memory-level parallelism, and the goal of reproducing AOL and SOAR.}
+Tiered memory systems combine a small, fast tier (local DRAM) with a larger,
+cheaper but slower tier (e.g., CXL-attached memory), so the way data is
+distributed across the two tiers determines how many memory stalls an
+application suffers. State-of-the-art tiering systems (TPP, NBT, Nomad and
+Colloid) make this decision based on access frequency, or \emph{hotness}.
 
-\todo{State whether the main focus has changed since the proposal.}
+Liu et al.\ (OSDI 2025) argue that hot data is not necessarily
+performance-critical. Out-of-order cores overlap independent misses, so accesses
+with high memory-level parallelism (MLP) hide most of the slow-tier latency,
+while low-MLP accesses, such as pointer chasing, pay all of it. The authors
+introduce the Amortized Offcore Latency, $\text{AOL} = \text{Latency}/\text{MLP}$,
+model the slowdown as $S = P \times K(\text{AOL})$, and build on it SOAR, an
+AOL-guided first-placement policy.
+
+Our project aims to reproduce these claims by answering four questions:
+\begin{itemize}
+  \item \textbf{Q1:} Can hotness be a faithful metric to measure performance?
+  \item \textbf{Q2:} If not, how can a better metric be defined?
+  \item \textbf{Q3:} With this metric, can we improve first data placement (SOAR)?
+  \item \textbf{Q4:} If time permits, can these elements improve PolyRack?
+\end{itemize}
+
+The main focus of the project has not changed since the proposal. What has
+changed is our understanding of the platform: the server available to us is
+based on Intel Haswell, an older generation than the Skylake and Sapphire Rapids
+machines used by the authors, which affects how the metrics can be measured
+(Section~2.1).
 
 % =====================================================================
 \section{Questions, Hypotheses, and Tests}

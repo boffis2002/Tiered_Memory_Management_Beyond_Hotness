@@ -1,0 +1,128 @@
+bc_mem0_aol.txt: 346,367,007,496 cycles 
+bc_mem0_aol.txt: 76,057,946,979 instructions 
+bc_mem0_aol.txt: 7,364,167,564 offcore_requests.demand_data_rd 
+bc_mem0_aol.txt: 1,740,959,452,802 offcore_requests_outstanding.demand_data_rd 
+bc_mem0_aol.txt: 337,865,663,956 offcore_requests_outstanding.cycles_with_demand_data_rd 
+bc_mem0_aol.txt: 18.8996 +- 0.0350 seconds time elapsed 
+bc_mem0_p.txt: 345,579,230,604 cycles 
+bc_mem0_p.txt: 76,051,074,895 instructions 
+bc_mem0_p.txt: 269,586,835,600 cycle_activity.stalls_l2_pending 
+bc_mem0_p.txt: 18.7217 +- 0.0319 seconds time elapsed 
+bc_mem1_aol.txt: 475,207,512,064 cycles 
+bc_mem1_aol.txt: 76,418,500,020 instructions 
+bc_mem1_aol.txt: 7,441,525,056 offcore_requests.demand_data_rd 
+bc_mem1_aol.txt: 2,879,026,442,280 offcore_requests_outstanding.demand_data_rd 
+bc_mem1_aol.txt: 466,135,475,065 offcore_requests_outstanding.cycles_with_demand_data_rd 
+bc_mem1_aol.txt: 25.281 +- 0.100 seconds time elapsed 
+bc_mem1_p.txt: 473,591,916,267 cycles 
+bc_mem1_p.txt: 76,420,815,973 instructions 
+bc_mem1_p.txt: 396,130,383,075 cycle_activity.stalls_l2_pending 
+bc_mem1_p.txt: 25.3162 +- 0.0589 seconds time elapsed 
+bfs_mem0_aol.txt: 41,072,568,294 cycles 
+bfs_mem0_aol.txt: 20,026,735,989 instructions 
+bfs_mem0_aol.txt: 980,078,544 offcore_requests.demand_data_rd 
+bfs_mem0_aol.txt: 111,296,702,500 offcore_requests_outstanding.demand_data_rd 
+bfs_mem0_aol.txt: 34,721,684,502 offcore_requests_outstanding.cycles_with_demand_data_rd 
+bfs_mem0_aol.txt: 3.6204 +- 0.0655 seconds time elapsed 
+bfs_mem0_p.txt: 41,696,728,518 cycles 
+bfs_mem0_p.txt: 20,014,170,408 instructions 
+bfs_mem0_p.txt: 23,139,180,210 cycle_activity.stalls_l2_pending 
+bfs_mem0_p.txt: 3.4598 +- 0.0969 seconds time elapsed 
+bfs_mem1_aol.txt: 53,867,354,472 cycles 
+bfs_mem1_aol.txt: 20,080,504,312 instructions 
+bfs_mem1_aol.txt: 990,619,162 offcore_requests.demand_data_rd 
+bfs_mem1_aol.txt: 171,742,838,267 offcore_requests_outstanding.demand_data_rd 
+bfs_mem1_aol.txt: 47,742,107,802 offcore_requests_outstanding.cycles_with_demand_data_rd 
+bfs_mem1_aol.txt: 4.2395 +- 0.0308 seconds time elapsed 
+bfs_mem1_p.txt: 53,765,132,894 cycles 
+bfs_mem1_p.txt: 20,075,844,552 instructions 
+bfs_mem1_p.txt: 34,573,703,565 cycle_activity.stalls_l2_pending 
+bfs_mem1_p.txt: 4.3306 +- 0.0951 seconds time elapsed 
+cc_mem0_aol.txt: 96,799,557,556 cycles 
+cc_mem0_aol.txt: 33,059,615,003 instructions 
+cc_mem0_aol.txt: 1,350,517,892 offcore_requests.demand_data_rd 
+cc_mem0_aol.txt: 207,612,131,502 offcore_requests_outstanding.demand_data_rd 
+cc_mem0_aol.txt: 83,255,710,964 offcore_requests_outstanding.cycles_with_demand_data_rd 
+cc_mem0_aol.txt: 6.236 +- 0.107 seconds time elapsed 
+cc_mem0_p.txt: 96,477,951,817 cycles 
+cc_mem0_p.txt: 32,993,877,395 instructions 
+cc_mem0_p.txt: 62,309,776,649 cycle_activity.stalls_l2_pending 
+cc_mem0_p.txt: 6.1938 +- 0.0585 seconds time elapsed 
+cc_mem1_aol.txt: 122,830,813,082 cycles 
+cc_mem1_aol.txt: 32,991,081,109 instructions 
+cc_mem1_aol.txt: 1,354,164,021 offcore_requests.demand_data_rd 
+cc_mem1_aol.txt: 315,413,647,145 offcore_requests_outstanding.demand_data_rd 
+cc_mem1_aol.txt: 111,050,417,879 offcore_requests_outstanding.cycles_with_demand_data_rd 
+cc_mem1_aol.txt: 7.645 +- 0.136 seconds time elapsed 
+cc_mem1_p.txt: 122,684,653,747 cycles 
+cc_mem1_p.txt: 32,897,613,139 instructions 
+cc_mem1_p.txt: 88,242,009,269 cycle_activity.stalls_l2_pending 
+cc_mem1_p.txt: 7.6562 +- 0.0768 seconds time elapsed 
+pr_mem0_aol.txt: 87,828,447,241 cycles 
+pr_mem0_aol.txt: 16,866,563,833 instructions 
+pr_mem0_aol.txt: 3,069,151,483 offcore_requests.demand_data_rd 
+pr_mem0_aol.txt: 575,168,769,048 offcore_requests_outstanding.demand_data_rd 
+pr_mem0_aol.txt: 86,067,208,512 offcore_requests_outstanding.cycles_with_demand_data_rd 
+pr_mem0_aol.txt: 5.872 +- 0.135 seconds time elapsed 
+pr_mem0_p.txt: 88,205,660,715 cycles 
+pr_mem0_p.txt: 16,865,545,762 instructions 
+pr_mem0_p.txt: 76,568,337,461 cycle_activity.stalls_l2_pending 
+pr_mem0_p.txt: 5.7026 +- 0.0195 seconds time elapsed 
+pr_mem1_aol.txt: 118,670,595,918 cycles 
+pr_mem1_aol.txt: 16,965,663,728 instructions 
+pr_mem1_aol.txt: 3,047,165,701 offcore_requests.demand_data_rd 
+pr_mem1_aol.txt: 1,029,332,953,276 offcore_requests_outstanding.demand_data_rd 
+pr_mem1_aol.txt: 117,075,068,204 offcore_requests_outstanding.cycles_with_demand_data_rd 
+pr_mem1_aol.txt: 7.3165 +- 0.0779 seconds time elapsed 
+pr_mem1_p.txt: 118,379,118,618 cycles 
+pr_mem1_p.txt: 16,967,119,703 instructions 
+pr_mem1_p.txt: 106,237,142,056 cycle_activity.stalls_l2_pending 
+pr_mem1_p.txt: 7.42057 +- 0.00362 seconds time elapsed 
+bc_mem0_aol.out:Average Time:        17.47613
+bc_mem0_aol.out:Average Time:        17.26254
+bc_mem0_aol.out:Average Time:        17.37042
+bc_mem0_p.out:Average Time:        17.22865
+bc_mem0_p.out:Average Time:        17.33819
+bc_mem0_p.out:Average Time:        17.22047
+bc_mem1_aol.out:Average Time:        23.70734
+bc_mem1_aol.out:Average Time:        23.72324
+bc_mem1_aol.out:Average Time:        23.75358
+bc_mem1_p.out:Average Time:        23.71487
+bc_mem1_p.out:Average Time:        23.76240
+bc_mem1_p.out:Average Time:        23.81336
+bfs_mem0_aol.out:Average Time:        0.23978
+bfs_mem0_aol.out:Average Time:        0.25849
+bfs_mem0_aol.out:Average Time:        0.23931
+bfs_mem0_p.out:Average Time:        0.23635
+bfs_mem0_p.out:Average Time:        0.23424
+bfs_mem0_p.out:Average Time:        0.23354
+bfs_mem1_aol.out:Average Time:        0.35147
+bfs_mem1_aol.out:Average Time:        0.31898
+bfs_mem1_aol.out:Average Time:        0.30644
+bfs_mem1_p.out:Average Time:        0.32077
+bfs_mem1_p.out:Average Time:        0.30476
+bfs_mem1_p.out:Average Time:        0.34901
+cc_mem0_aol.out:Average Time:        0.58304
+cc_mem0_aol.out:Average Time:        0.59914
+cc_mem0_aol.out:Average Time:        0.58759
+cc_mem0_p.out:Average Time:        0.57342
+cc_mem0_p.out:Average Time:        0.58940
+cc_mem0_p.out:Average Time:        0.57740
+cc_mem1_aol.out:Average Time:        0.74488
+cc_mem1_aol.out:Average Time:        0.74782
+cc_mem1_aol.out:Average Time:        0.77183
+cc_mem1_p.out:Average Time:        0.76181
+cc_mem1_p.out:Average Time:        0.75875
+cc_mem1_p.out:Average Time:        0.74574
+pr_mem0_aol.out:Average Time:        4.45520
+pr_mem0_aol.out:Average Time:        4.30352
+pr_mem0_aol.out:Average Time:        4.21307
+pr_mem0_p.out:Average Time:        4.29799
+pr_mem0_p.out:Average Time:        4.22868
+pr_mem0_p.out:Average Time:        4.25269
+pr_mem1_aol.out:Average Time:        5.76082
+pr_mem1_aol.out:Average Time:        5.77087
+pr_mem1_aol.out:Average Time:        5.73451
+pr_mem1_p.out:Average Time:        5.72349
+pr_mem1_p.out:Average Time:        5.72788
+pr_mem1_p.out:Average Time:        5.72973

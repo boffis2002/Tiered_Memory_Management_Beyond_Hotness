@@ -23,6 +23,13 @@ All commands below are **read-only**, except `sudo perf stat`, which only reads 
 | Frequency | `intel_cpufreq` (passive), governor `schedutil`, turbo on | ⚠️ noisy, needs control |
 | NUMA balancing | `numa_balancing = 1`, demotion off | ⚠️ must be off for E1 |
 | Memory tiers | **single tier** (`memory_tier4` = nodes 0-1) | ❌ NBT/TPP cannot work as is |
+| PEBS | **format 2** (no timestamp in the record); `mem_load_uops_retired.l3_miss` available | ⚠️ `perf record -d` instead of the authors' tracepoint (see §10) |
+| Uncore frequency driver | not available | ❌ authors' script cannot work here (see §10) |
+| Toolchain | Initially missing; installed with `apt`, microbenchmark built | ✅ (see §10.4) |
+| First measurements | Slow-tier emulation works: pointer chasing ~102 ns local, ~154 ns remote (~1.5×) | ✅ provisional (see §11) |
+| GAPBS (first data) | `bc`, `bfs`, `pr`, `cc` on `urand24`: +29% to +37% on the remote node | ✅ provisional (see §12) |
+| Counter anomaly | `offcore_requests_outstanding.demand_data_rd` unreliable; `cycles_with_demand_data_rd` consistent | ⚠️ derive AOL directly (see §11.3) |
+| Disk | 162 GB free; `/boot` on the root partition | ✅ |
 | SoarAlto artifact | Full SOAR pipeline available, but hard-wired for bc-urand on Skylake; baselines are kernel patches; local DRAM limited via GRUB `memmap` | ⚠️ SOAR needs porting to Haswell, baselines need custom kernels (see §6) |
 
 ---
@@ -90,6 +97,8 @@ Metrics derived from them:
 | Average MLP | `outstanding.demand_data_rd / outstanding.cycles_with_demand_data_rd` |
 | **AOL** = Latency / MLP | `outstanding.cycles_with_demand_data_rd / offcore_requests.demand_data_rd` |
 | **P** (stall ratio) | `cycle_activity.stalls_l2_pending / cycles` |
+
+> **Update:** the first measurements show that the two formulas using `outstanding.demand_data_rd` (latency and MLP) are unreliable on this machine; see §11.3.
 
 **Haswell limitations (methodology differences from the paper):**
 - Skylake's `CYCLE_ACTIVITY.STALLS_L3_MISS` does not exist; `stalls_l2_pending` also counts stalls on L3 hits, so P is likely overestimated.
@@ -190,7 +199,7 @@ Workloads named in `run/README.md`: bc-kron, bc-twitter, bc-urand, sssp-kron, tc
 ### 6.2 Findings relevant to our machine
 
 1. **The kernel patch**: the SOAR README requires Linux v5.18 with `patches/nbt.patch`. By inspection, the only part of the patch that serves profiling is the `pebs:pebs` tracepoint (`ip`, `dla`, `tsc`); the rest (promotion rate limiting, PTE scan scaling, kswapd reset, sysctls) concerns NBT migrations. SOAR may therefore not need this kernel (see §6.3). GAPBS must be built with `-no-pie` (`patches/gapbs.patch`).
-2. **Slow-tier emulation**: remote NUMA node with its uncore frequency lowered to 500 MHz (`modify-uncore-freq.sh`), giving ~190 ns on CloudLab c220g5 (Skylake), **and node 1's CPUs taken offline** (`configure_cxl_exp_cores` in `config.sh`). The script writes to `/sys/devices/system/cpu/intel_uncore_frequency`, which requires `CONFIG_INTEL_UNCORE_FREQ_CONTROL`. From memory, this driver does not support Haswell (to be verified); if so, uncore frequency would have to be set via MSRs (to be discussed with the TA).
+2. **Slow-tier emulation**: remote NUMA node with its uncore frequency lowered to 500 MHz (`modify-uncore-freq.sh`), giving ~190 ns on CloudLab c220g5 (Skylake), **and node 1's CPUs taken offline** (`configure_cxl_exp_cores` in `config.sh`). The script writes to `/sys/devices/system/cpu/intel_uncore_frequency`, which requires `CONFIG_INTEL_UNCORE_FREQ_CONTROL`. **Verified: this interface is not available on our machine** (§10). The uncore frequency could only be set via MSRs (to be discussed with the TA); otherwise we keep the natural remote latency.
 3. **Local DRAM is limited with the GRUB `memmap=` kernel parameter** (`update-grub` + reboot), not with a memory-eating process, because tiering systems would migrate its pages. This is a persistent boot change and conflicts with the TA rule "stock kernel stays the default"; to be discussed with the TA.
 4. **Baselines**: each `src/alto/*/compile.sh` switches kernel version (e.g., v6.3), applies patches, builds and installs the kernel and updates the bootloader. Must be adapted to the one-time GRUB boot procedure before use. "Colloid" in the artifact means Colloid-TPP (`colloid-skx.patch`, Skylake-specific).
 5. **Reference platforms** are Skylake (Xeon Silver 4114) and Sapphire Rapids (Xeon Gold 6430); ALTO's AOL thresholds were profiled on Skylake. On Haswell, K must be recalibrated (as planned in E2).
@@ -210,8 +219,8 @@ Workloads named in `run/README.md`: bc-kron, bc-twitter, bc-urand, sssp-kron, tc
 
 Haswell porting problems:
 
-1. **PEBS timestamps**: the tracepoint reads `pebs->tsc`. From memory, this record field exists only from Skylake (PEBS format 3); Haswell uses format 2, so the value would be meaningless (to be verified). Candidate alternative: standard `perf record -d`, which provides data address and time with no kernel patch, adapting the parsing and aligning its clock with the `rdtsc` timestamps of `ldlib.c`.
-2. **Event names**: `mem_load_retired.l3_miss` should become `mem_load_uops_retired.l3_miss` on Haswell (to be verified with `perf list`), and `CYCLE_ACTIVITY.STALLS_L3_MISS` becomes `stalls_l2_pending` (also in the parser of `proc_obj_e.py`).
+1. **PEBS timestamps**: the tracepoint reads `pebs->tsc`. From memory, this record field exists only from Skylake (PEBS format 3). **Verified: our machine uses format 2** (§10), so the value would be meaningless. Candidate alternative: standard `perf record -d`, which provides data address and time with no kernel patch, adapting the parsing and aligning its clock with the `rdtsc` timestamps of `ldlib.c`.
+2. **Event names**: `mem_load_retired.l3_miss` becomes `mem_load_uops_retired.l3_miss` on Haswell (verified with `perf list`, §10), and `CYCLE_ACTIVITY.STALLS_L3_MISS` becomes `stalls_l2_pending` (also in the parser of `proc_obj_e.py`).
 3. **Model constants**: the script uses `P / (24.67/AOL + 0.87)`, i.e., a = 0.87 and b = 24.67 in K = 1/(a + b/AOL), plus fixed AOL thresholds (40, 45, 60, 80). They must be recalibrated (E2).
 4. **Counter budget**: profiling uses 4 `perf stat` events plus PEBS at the same time. With NMI watchdog and HT on, this exceeds the 4 programmable counters (the authors disable both).
 
@@ -242,6 +251,14 @@ Haswell porting problems:
 | `numa/demotion_enabled` | `false` |
 | `kernel.nmi_watchdog` | `1` |
 | `kernel.perf_event_paranoid` | `4` |
+| `transparent_hugepage/enabled` | `madvise` |
+| `kernel.randomize_va_space` (ASLR) | `2` |
+| `ksm/run` | `0` |
+| `smt/control` (HT) | `on` |
+| 1 GB huge pages on node 0 (`nr_hugepages`) | `0` |
+| `GRUB_DEFAULT` | `0` |
+| `GRUB_TIMEOUT` / `GRUB_TIMEOUT_STYLE` | `0` / `hidden` |
+| `GRUB_CMDLINE_LINUX` / `GRUB_CMDLINE_LINUX_DEFAULT` | empty |
 | Kernel | `6.8.0-147-generic` |
 
 ---
@@ -251,15 +268,176 @@ Haswell porting problems:
 1. During our measurements, may we set the governor to `performance`, disable turbo and set `numa_balancing = 0`, restoring the original values right afterwards?
 2. The kernel puts both NUMA nodes in a single memory tier, so NBT/TPP cannot promote/demote. Is there a recommended way to make node 1 a lower tier?
 3. The artifact limits local DRAM with the GRUB `memmap=` parameter, which is a persistent boot change. Is this allowed (e.g., only for a one-time boot), or should we use another method?
-4. The artifact lowers the remote uncore frequency to emulate CXL latency. May we change the uncore frequency on this Haswell machine, and through which interface (driver or MSRs)?
+4. The artifact lowers the remote uncore frequency to emulate CXL latency, but the uncore frequency driver is not available here. May we set it through MSR 0x620, or should we keep the natural remote latency?
 5. The artifact also disables HT, swap, ASLR, KSM, THP and the NMI watchdog, and takes node 1's CPUs offline. Which of these may we apply during our runs, restoring them afterwards?
-6. If SOAR cannot run on the stock kernel, is installing Linux v5.18 + `nbt.patch` (one-time boot) acceptable?
+6. We installed the compiler toolchain with `apt` (`build-essential`, `libnuma-dev`) to build the microbenchmark. Is this fine, and may we also install `vmtouch` and `libgfortran5` for SOAR?
+7. The artifact targets Skylake. Could we get CloudLab access (c220g5, the authors' platform) for SOAR and the baselines?
+8. Which team shares this machine, and are there timeslots? Is a remote console available if a kernel does not boot?
 
 ## 9. Next steps
 
 1. ~~Read the SoarAlto README (kernel requirements, CXL emulation, tier setup).~~ Done (§6).
 2. ~~Read `src/microbenchmark/` (E1 code) and the SOAR pipeline.~~ Done (§6.3, §6.4).
-3. Read-only checks on the machine: PEBS format, `mem_load_uops_retired.l3_miss`, presence of `intel_uncore_frequency`, free disk space.
-4. Clone SoarAlto and GAPBS in the home directory; confirm the findings of §6 on the actual code.
-5. Measure real local/remote latencies (e.g., Intel MLC) and compare with the paper's 90/190 ns.
-6. Before any custom kernel: persistent journal, `/boot` space check, one-time GRUB boot (TA rules).
+3. ~~Read-only checks on the machine: PEBS format, `mem_load_uops_retired.l3_miss`, presence of `intel_uncore_frequency`, free disk space.~~ Done (§10).
+4. ~~Clone SoarAlto and GAPBS in the home directory.~~ Done. Still to do: confirm the findings of §6 on the actual code.
+5. ~~Build the microbenchmark and take first measurements.~~ Done (§11), provisional. Repeat under stable settings after TA approval.
+6. Check that no result file contains multiplexing (§12.3).
+7. Implement the three microbenchmark changes for E1 (§6.4), then run E1.
+8. Repeat `bfs` and `cc` with more trials, and add more varied workloads for E2 (§12.2).
+9. Before any custom kernel: persistent journal, `/boot` space check, one-time GRUB boot (TA rules).
+
+## 10. Additional read-only checks (2026-11-09)
+
+### 10.1 PEBS
+
+```
+$ sudo dmesg | grep -iE "PEBS|Performance Events"
+Performance Events: PEBS fmt2+, Haswell events, 16-deep LBR, full-width counters, Intel PMU driver.
+```
+
+PEBS format 2 has no timestamp field in the record, so the authors' `pebs:pebs` tracepoint cannot be used here. Since this tracepoint is the only part of `nbt.patch` relevant to SOAR, there is no reason to install Linux v5.18 for SOAR on this machine. The plan is to use `perf record -d` on the stock kernel (still to be tested).
+
+### 10.2 Memory events
+
+`perf list` shows, among others:
+
+| Event | Possible use |
+|---|---|
+| `mem_load_uops_retired.l3_miss` | PEBS sampling for SOAR (replaces `mem_load_retired.l3_miss`) |
+| `mem_load_uops_l3_miss_retired.{local_dram,remote_dram}` | Split misses between the fast and slow tiers (fraction α of the proposal); check the placement |
+| `mem_load_uops_retired.l3_hit` | Estimate the part of `stalls_l2_pending` due to DRAM rather than L3 hits |
+| `mem_trans_retired.load_latency_gt_*` | Latency-threshold sampling |
+
+To be validated with the microbenchmark, where the memory node is known: from memory, some of these Haswell events have known errata.
+
+Idea to evaluate in E2 (formula from memory, to be checked against Intel's documentation): with Intel's Top-Down method for Haswell, `P_DRAM ≈ (1 − l3_hit / (l3_hit + 7 × l3_miss)) × stalls_l2_pending / cycles`. It would require a third run per measurement.
+
+### 10.3 Uncore frequency
+
+```
+$ ls /sys/devices/system/cpu/intel_uncore_frequency ...
+no uncore sysfs
+$ modinfo intel_uncore_frequency | grep -i "model:003F" ...
+Haswell-X not listed
+```
+
+The authors' `modify-uncore-freq.sh` cannot work here. The second message appears both if the driver does not support Haswell-X and if the module is absent. Unless the TA approves MSR writes, the slow tier keeps the natural remote latency, which must be measured and stated in the methodology.
+
+### 10.4 Disk and toolchain
+
+```
+$ df -h / /boot /home
+/dev/sda2  182G  11G  162G  7%   (same filesystem for all three)
+$ which gcc g++ make git python3 tmux numastat
+/usr/bin/git  /usr/bin/python3  /usr/bin/tmux  /usr/bin/numastat
+$ dpkg -l | grep -E "libnuma-dev|build-essential|vmtouch|libgfortran5"
+(no output)
+```
+
+- 162 GB free is enough for graphs and results. `/boot` is on the root filesystem.
+- **`gcc`, `g++`, `make`, `libnuma-dev` and `build-essential` were missing** at inspection time.
+- **Update:** the toolchain was then installed with `apt`, and the microbenchmark builds. Tell the TA which packages were added, and check the list with `dpkg -l | grep -E "build-essential|libnuma-dev"`.
+
+### 10.5 System settings and CPU topology
+
+```
+$ cat .../transparent_hugepage/enabled .../randomize_va_space .../ksm/run .../smt/control
+always [madvise] never
+2
+0
+on
+$ grep -E "^GRUB_(DEFAULT|SAVEDEFAULT|TIMEOUT|CMDLINE)" /etc/default/grub
+GRUB_DEFAULT=0
+GRUB_TIMEOUT_STYLE=hidden
+GRUB_TIMEOUT=0
+GRUB_CMDLINE_LINUX_DEFAULT=""
+GRUB_CMDLINE_LINUX=""
+$ cat .../node0/hugepages/hugepages-1048576kB/nr_hugepages
+0
+$ cat .../cpu{0,2,4,6,8,10,12,14}/topology/thread_siblings_list
+0,24  2,26  4,28  6,30  8,32  10,34  12,36  14,38
+```
+
+- **CPU topology:** the hyper-thread sibling of each CPU is CPU + 24. CPUs `0,2,4,6,8,10,12,14` are 8 distinct physical cores on node 0.
+- **THP** is `madvise`, so plain `malloc` does not get huge pages. The authors use `never`.
+- **ASLR** is on. With `-no-pie`, the binary's call-site addresses used by SOAR should stay fixed, so disabling ASLR may not be needed (to be verified).
+- **GRUB:** `GRUB_DEFAULT=0` means the first menu entry, so a custom kernel with a higher version could become the default. The boot menu is hidden with no timeout, so a kernel cannot be chosen by hand at boot. Fix before any custom kernel (Roadmap, Phase 9.1).
+- **1 GB huge pages** are supported by the kernel, so reserving them is a possible alternative to `memmap`; whether they can be allocated at runtime is untested, and it would need TA approval.
+
+## 11. First measurements (2026-11-09, provisional)
+
+**Conditions:** `src/microbenchmark` unmodified, single-thread modes only, CPU on node 0 (`numactl --cpunodebind=0`), memory on node 0 or node 1 (`--membind`), 1 GiB buffer. Governor, turbo and `numa_balancing` left at their original values, so these results are **provisional** and must be repeated under stable settings. Raw data on the server: `~/hotness/results/micro_provisional_2026-11-09_1634/` and `~/hotness/results/pc_i1_mem{0,1}.txt`.
+
+### 11.1 Whole-program results (`-i 9`, 3 runs)
+
+Time and P come from the P run; the other metrics from the AOL run. No multiplexing appears in the `seq_mem1` output inspected in full; the other files are still to be checked (§12.3).
+
+| Configuration | Time (s) | Latency (cycles) | MLP | AOL (cycles) | P | Slowdown |
+|---|---|---|---|---|---|---|
+| Pointer chasing, node 0 | 25.49 | 603 | 3.7 | 162 | 0.76 | reference |
+| Pointer chasing, node 1 | 37.01 | 988 | 4.2 | 236 | 0.79 | **+45%** |
+| Sequential, node 0 | 23.46 | 183 | 11.7 | 16 | 0.66 | reference |
+| Sequential, node 1 | 31.42 | 252 | 12.3 | 21 | 0.74 | **+34%** |
+
+Observations:
+
+- The direction matches the paper: the low-MLP pattern slows down more.
+- P is similar for the two patterns, while AOL differs by about 10×. Two patterns are not enough to validate the predictor.
+- Latency and MLP in this table are not reliable for pointer chasing (§11.3). These figures also include the setup phase (list construction and shuffling).
+
+### 11.2 Pointer chasing without the setup phase
+
+The setup phase is the same at any iteration count, so subtracting a `-i 1` run (3 runs) from the `-i 9` run isolates 8 traversal iterations, i.e., about 134 M steps.
+
+| Quantity (`-i 9` minus `-i 1`) | Node 0 | Node 1 |
+|---|---|---|
+| Time per step | **~102 ns** | **~154 ns** |
+| Core cycles per step | ~253 | ~383 |
+| `cycles_with_demand_data_rd` per step | ~254 | ~385 |
+| Requests relative to the steps | +35% | +38% |
+| Latency from counters (cycles) | 791 | 1456 |
+| MLP from counters | 4.2 | 5.2 |
+| AOL from counters (cycles) | 188 | 280 |
+
+The remote/local ratio is about **1.5×**, against about 2.1× in the paper (90/190 ns). The per-step time includes TLB misses (4 KB pages), so it is not a pure memory latency. The emulated slow tier is therefore less slow than in the paper; this must be stated in the methodology.
+
+### 11.3 Counter anomaly
+
+A pointer chase is serial, so MLP should be about 1. The measured MLP is 4.2–5.2, and removing the setup phase did not bring it closer to 1. A request cannot stay outstanding for 791 cycles if each step takes 253 cycles. Therefore **`offcore_requests_outstanding.demand_data_rd` is not reliable on this machine, at least for this pattern.** The cause is unknown; a Haswell erratum or an effect of hyper-threading are possible.
+
+- `cycles_with_demand_data_rd` is consistent with the real cycles per step.
+- AOL can be computed as `cycles_with_demand_data_rd / demand_data_rd`, which does **not** use the suspect counter. The authors' `proc_obj_e.py` does the same.
+- The number of requests is 35–38% above the number of steps (possibly page walks, not verified), so this AOL is about 26% below the cycles per step.
+- Latency and MLP derived from `outstanding.demand_data_rd` must not be reported for pointer chasing, and should be treated with caution elsewhere.
+
+## 12. First GAPBS results (2026-11-09, provisional)
+
+**Conditions:** GAPBS with `-no-pie`, graph `urand24` (`./converter -u24 -k16`, 16.8 M nodes, 2.2 GB), read once with `numactl --membind=0` to warm the page cache. 8 OpenMP threads on physical cores `0,2,4,6,8,10,12,14` (node 0), memory on node 0 or node 1. Governor, turbo and `numa_balancing` left at their original values. Each case ran 3 times with each of the two event sets. Summary: `gapbs_summary.log` in this repository; raw data in `~/hotness/results/gapbs_provisional_*/` on the server.
+
+Arguments: `bc -i4 -n1`, `pr -n1`, `bfs -n8`, `cc -n8`. `sssp` needs a weighted graph and `tc` is very slow, so they were not run.
+
+### 12.1 Results
+
+Slowdown is computed on GAPBS's `Average Time` (algorithm only), as the mean of the 6 runs. "Whole-process slowdown" uses the elapsed time reported by `perf`, which includes graph loading. P and AOL are reported as local / remote.
+
+| Workload | Local (s) | Remote (s) | Slowdown | Whole-process slowdown | P | AOL (cycles) |
+|---|---|---|---|---|---|---|
+| `bc` | 17.32 | 23.75 | **+37.1%** | +35.2% | 0.78 / 0.84 | 46 / 63 |
+| `bfs` | 0.24 | 0.33 | **+35.4%** | +25.2% | 0.56 / 0.64 | 35 / 48 |
+| `pr` | 4.29 | 5.74 | **+33.8%** | +30.1% | 0.87 / 0.90 | 28 / 38 |
+| `cc` | 0.59 | 0.76 | **+29.1%** | +23.6% | 0.65 / 0.72 | 62 / 82 |
+
+### 12.2 Observations
+
+- The slowdowns are similar (29–37%), partly because the remote node is only about 1.5× slower. With such a narrow range, there is little for a predictor to explain.
+- The correlation between local P and slowdown is weak (about 0.2), but with 4 points it says nothing about H2.
+- `perf` counters cover the whole process, including graph loading. For `bfs` and `cc`, the algorithm takes only a small part of the 3–6 s total, so their P and AOL mostly describe the loading. More trials (`-n`) are needed. `bc` is the most reliable case, followed by `pr`.
+- Latency and MLP are not reported, because of the anomaly in §11.3.
+
+### 12.3 Pending check
+
+The compact summary command removed everything in parentheses, including any multiplexing percentages, so the summary cannot rule out multiplexing. To be checked on the raw files:
+
+```bash
+grep -lE '\([0-9.]+%\)' ~/hotness/results/*/*.txt || echo "no multiplexing"
+```
