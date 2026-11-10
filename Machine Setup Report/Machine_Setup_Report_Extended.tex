@@ -1,0 +1,791 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage[obeyspaces,spaces]{url}
+\usepackage{fancyvrb}
+\usepackage{enumitem}
+\usepackage{array}
+
+\urlstyle{tt}
+\renewcommand{\UrlBreaks}{\do\.\do\_\do\/\do\,\do\-\do\=}
+% Identifiers (events, files, options): breakable, underscores allowed.
+\newcommand{\id}[1]{\path{#1}}
+
+\newenvironment{note}{\par\smallskip\noindent\begin{tabularx}{\linewidth}{|X|}\hline}{\\\hline\end{tabularx}\par\smallskip}
+
+\fvset{fontsize=\small,frame=single,framesep=2mm}
+\setlist{itemsep=2pt,topsep=4pt}
+\emergencystretch=3em
+\renewcommand{\arraystretch}{1.15}
+
+\title{Machine Setup and First Measurements on iccluster113\\
+\large Extended report --- CS-471 project ``Tiered Memory Management Beyond Hotness''}
+\author{Mayeul Besnard \and Sergio Boffi}
+\date{November 10, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report describes the server provided for our reproduction of Liu et al.\
+(OSDI'25), what we verified on it, and the first measurements. It extends
+\id{Machine_Setup_Report.md} with background explanations and with the work of
+November 10: the PEBS sampling test, the changes to the authors' microbenchmark,
+and the first run of experiment E1. All results are \textbf{provisional}: they
+were taken with the CPU frequency governor, turbo boost and automatic NUMA
+balancing left at their original values. The commands we ran are listed, with
+their purpose and outcome, in \id{Commands_Log.md}.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% =====================================================================
+\section{Background}
+
+This section explains the concepts used in the rest of the report.
+
+\subsection{Tiered memory and its emulation}
+
+A tiered memory system has a small, fast tier (local DRAM) and a larger, slower
+tier, such as CXL-attached memory. The operating system decides on which tier
+each page lives. Systems such as TPP, NBT, Nomad and Colloid move frequently
+accessed (\emph{hot}) pages to the fast tier.
+
+We have no CXL hardware. Like the authors, we emulate the slow tier with the
+memory of the \emph{other} socket of a two-socket server. A program runs on the
+CPUs of node~0, and its memory is placed either on node~0 (fast tier) or on
+node~1 (slow tier). Every access to node~1 crosses the link between the two
+sockets, which adds latency and limits bandwidth. The tool \id{numactl} chooses
+the CPUs (\id{--cpunodebind}, \id{--physcpubind}) and the memory node
+(\id{--membind}) of a whole process. The library call
+\id{numa_alloc_onnode} places a single buffer.
+
+\subsection{Memory-level parallelism and AOL}
+
+An out-of-order core does not wait for each cache miss before issuing the next
+one. If several misses are independent, they are in flight at the same time and
+their latencies overlap. The average number of misses in flight is the
+\emph{memory-level parallelism} (MLP).
+
+\begin{itemize}
+  \item In a \textbf{pointer chase} each load needs the address returned by the
+        previous one. Misses are serial, MLP is about~1, and every access pays
+        the whole memory latency.
+  \item In a \textbf{sequential read} the addresses are known in advance. Many
+        misses overlap and the hardware prefetchers fetch lines early. MLP is
+        high, and a slower memory costs much less than its latency suggests.
+\end{itemize}
+
+The paper's metric is the \textbf{Amortized Offcore Latency},
+$\text{AOL} = \text{Latency}/\text{MLP}$: the latency each miss
+\emph{effectively} costs once overlap is taken into account. The paper's main
+claim is that the slowdown caused by slow memory depends on AOL, not on how
+often data is accessed. A frequently accessed array with high MLP can tolerate
+the slow tier better than a rarely accessed linked list.
+
+\subsection{Measuring AOL with hardware counters}
+
+Intel CPUs count off-core requests, i.e.\ requests that leave the core towards
+L3 and memory. Three counters are needed:
+
+\begin{center}
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.43\linewidth}X}
+\toprule
+Event & Meaning \\
+\midrule
+\id{offcore_requests.demand_data_rd} ($N$) & number of demand data reads \\
+\id{offcore_requests_outstanding.demand_data_rd} ($O$) & every cycle, adds the number of reads in flight \\
+\id{offcore_requests_outstanding.cycles_with_demand_data_rd} ($C$) & cycles with at least one read in flight \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+$O$ is the sum, over all requests, of their latencies (Little's law). Therefore
+\[
+\text{Latency} = \frac{O}{N}, \qquad
+\text{MLP} = \frac{O}{C}, \qquad
+\text{AOL} = \frac{\text{Latency}}{\text{MLP}} = \frac{C}{N}.
+\]
+AOL does not depend on $O$. This turned out to be important, because $O$ is
+unreliable on our machine (Section~\ref{sec:anomaly}).
+
+\subsection{The slowdown model}
+
+The paper models the slowdown on the slow tier as $S = P \times K(\text{AOL})$:
+\begin{itemize}
+  \item $P$ is the fraction of cycles in which the core is stalled waiting for
+        memory. A program that rarely waits for memory cannot slow down much.
+  \item $K(\text{AOL}) = 1/(a + b/\text{AOL})$ grows with AOL: misses that are
+        not hidden by parallelism make the program more sensitive. The
+        authors' scripts use $a = 0.87$ and $b = 24.67$, fitted on Skylake. We
+        must fit them again on our machine (experiment E2).
+\end{itemize}
+On Skylake $P$ is measured with \id{cycle_activity.stalls_l3_miss}. This event
+does not exist on our CPU (Section~\ref{sec:counters}).
+
+\subsection{Counters, \texttt{perf} and multiplexing}
+
+\id{perf stat} counts events for one command. A CPU has a few fixed counters
+and, on our CPU, 4 programmable counters per hardware thread when
+hyper-threading is on. If more events are requested than counters are free,
+the kernel \emph{multiplexes}: it rotates the events on the counters and scales
+the counts. \id{perf} then prints a percentage such as \texttt{(61.27\%)}, the
+fraction of time the event was actually counted. Scaled values are estimates,
+so we avoid multiplexing altogether.
+
+\subsection{PEBS}
+
+\emph{Precise Event-Based Sampling} makes the CPU write a record every $n$
+occurrences of an event, e.g.\ every 3001 loads that miss L3. For memory events
+the record contains the address of the instruction and the address of the
+\emph{data}. SOAR uses these samples to find out which allocated objects cause
+the misses. The record format depends on the CPU generation; from memory, a
+timestamp field was added only with format~3 (Skylake).
+
+\subsection{Linux mechanisms that move memory}
+
+\begin{itemize}
+  \item \textbf{NUMA balancing} (\id{kernel.numa_balancing} $=1$) periodically
+        samples the pages of a process and migrates them towards the node that
+        accesses them. It can undo a placement chosen on purpose.
+  \item \textbf{Memory tiering mode} ($=2$, used by NBT) promotes hot pages from
+        a slower tier to a faster one, and \textbf{demotion} moves cold pages
+        down. Both work only between \emph{different memory tiers}, which the
+        kernel builds from each node's ``abstract distance''.
+  \item \textbf{CPU frequency}: with a load-dependent governor and turbo, the
+        clock changes during a run, so the same latency in nanoseconds
+        corresponds to a different number of cycles.
+\end{itemize}
+
+% =====================================================================
+\section{Summary}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.2\linewidth}X>{\raggedright\arraybackslash}p{0.17\linewidth}}
+\toprule
+Item & Result & Status \\
+\midrule
+CPU & Intel Xeon E5-2680 v3 (Haswell-EP), 2 sockets $\times$ 12 cores, HT on (48 logical CPUs) & older than the paper's Skylake \\
+Memory & 2 NUMA nodes, about 126\,GB each, almost all free & OK \\
+Kernel & \id{6.8.0-147-generic} (Ubuntu) & OK \\
+\id{perf} & v6.8.12, usable with \id{sudo} & OK \\
+AOL counters & all available & OK \\
+$P$ counter & \id{stalls_l3_miss} missing; \id{stalls_l2_pending} as proxy & methodology change \\
+Counter budget & 4 programmable counters $\Rightarrow$ two runs per measurement & solved \\
+Multiplexing & none in any result file (checked on Nov.~9) & OK \\
+Frequency & \id{intel_cpufreq}, \id{schedutil}, turbo on & to be fixed (TA) \\
+NUMA balancing & on; only 209 pages migrated during E1 & to be turned off (TA) \\
+Memory tiers & a single tier with both nodes & NBT/TPP cannot migrate \\
+PEBS & format 2, no timestamp; \id{perf record -d} works & SOAR profiling feasible \\
+Uncore frequency & driver not available & natural remote latency \\
+Slow tier & pointer chasing $\approx$102\,ns local, $\approx$154\,ns remote ($1.5\times$) & less slow than the paper ($2.1\times$) \\
+Counter anomaly & $O$ unreliable; AOL $= C/N$ consistent & AOL derived without $O$ \\
+GAPBS & \id{bc}, \id{bfs}, \id{pr}, \id{cc}: +29\% to +37\% on the remote node & provisional \\
+Microbenchmark & three changes for E1, verified & done \\
+E1 & first run done; whole-program time still missing & provisional \\
+SoarAlto artifact & full SOAR pipeline, but Skylake-specific; baselines are kernel patches & porting needed \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% =====================================================================
+\section{CPU and memory topology}
+
+\begin{Verbatim}
+$ lscpu | grep -E "Model name|Vendor|Socket|Core\(s\)|Thread\(s\)|NUMA|^CPU\(s\)|L3"
+CPU(s):                 48
+Model name:             Intel(R) Xeon(R) CPU E5-2680 v3 @ 2.50GHz
+Thread(s) per core:     2
+Core(s) per socket:     12
+Socket(s):              2
+L3 cache:               60 MiB (2 instances)
+NUMA node0 CPU(s):      0,2,4,...,46   (even)
+NUMA node1 CPU(s):      1,3,5,...,47   (odd)
+
+$ numactl -H
+node 0 size: 128686 MB   free: 127073 MB
+node 1 size: 129012 MB   free: 128267 MB
+node distances:   0: 10 21   1: 21 10
+\end{Verbatim}
+
+\begin{itemize}
+  \item \textbf{12 cores per socket} are more than the 8 threads used in the paper.
+  \item \textbf{30\,MiB of L3 per socket} is far smaller than the workloads
+        (several GB), so they really exercise memory.
+  \item \textbf{About 126\,GB per node}: any workload fits entirely on one node,
+        which is what static placement experiments need.
+  \item \textbf{CPU numbering is interleaved}: even CPUs are on node~0, odd CPUs
+        on node~1. A range such as \id{0-11} would spread threads over both
+        sockets. This is exactly the bug we found in the microbenchmark
+        (Section~\ref{sec:changes}).
+  \item \textbf{Hyper-thread siblings}: CPU $i$ and CPU $i+24$ share a physical
+        core. CPUs \id{0,2,4,6,8,10,12,14} are 8 distinct physical cores of
+        node~0; we use them for multi-threaded runs.
+  \item The NUMA distance 21 is an estimate written by the firmware, not a
+        measurement. The real latencies are in Section~\ref{sec:micro}.
+\end{itemize}
+
+% =====================================================================
+\section{Performance counters}
+\label{sec:counters}
+
+\subsection{Access}
+
+\id{/proc/sys/kernel/perf_event_paranoid} is \texttt{4}, a Debian/Ubuntu value
+that forbids counters to normal users. We run \id{sudo perf} for each
+measurement, instead of lowering this setting, so the machine configuration
+stays unchanged.
+
+\subsection{Events and derived metrics}
+
+All AOL events exist. For $P$ we use \id{cycle_activity.stalls_l2_pending},
+the cycles stalled while an L2 miss is pending.
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Quantity & Formula \\
+\midrule
+Latency (cycles) & $O / N$ \\
+MLP & $O / C$ \\
+AOL (cycles) & $C / N$ \\
+$P$ & \id{stalls_l2_pending} / \id{cycles} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Differences from the paper}, due to Haswell:
+\begin{itemize}
+  \item \id{stalls_l2_pending} also counts stalls on L2 misses that hit in L3.
+        Our $P$ therefore includes stalls the slow tier does not affect, and is
+        probably overestimated.
+  \item There are no offcore events restricted to L3 misses. Latency and AOL mix
+        L3 hits (about 40 cycles) with DRAM accesses, so AOL can be ``diluted''
+        for cache-friendly workloads.
+  \item A possible correction, to be evaluated in E2, uses Intel's Top-Down
+        method for Haswell. From memory, and still to be checked against
+        Intel's documentation:
+        \[
+        P_\text{DRAM} \approx \Bigl(1 - \frac{h}{h + 7m}\Bigr)
+        \times \frac{\text{stalls\_l2\_pending}}{\text{cycles}},
+        \]
+        with $h$ = \id{mem_load_uops_retired.l3_hit} and
+        $m$ = \id{mem_load_uops_retired.l3_miss}. It would need a third run
+        per measurement.
+\end{itemize}
+
+\subsection{Multiplexing and the two-run procedure}
+
+A first test with six events showed multiplexing on \id{cycles} (61\%) and
+\id{stalls_l2_pending} (39\%). The cause is the NMI watchdog
+(\id{nmi_watchdog} $=1$): it uses the fixed cycle counter, so our
+\id{cycles} must take a programmable one, and with hyper-threading only four
+are available. Five programmable events do not fit.
+
+Instead of disabling the watchdog or hyper-threading, which would change the
+machine, each measurement is split into two runs of the same command, both
+verified to run without multiplexing:
+
+\begin{Verbatim}
+# Run A - AOL
+sudo perf stat -e cycles,instructions,offcore_requests.demand_data_rd,\
+offcore_requests_outstanding.demand_data_rd,\
+offcore_requests_outstanding.cycles_with_demand_data_rd -- <cmd>
+# Run B - P
+sudo perf stat -e cycles,instructions,cycle_activity.stalls_l2_pending -- <cmd>
+\end{Verbatim}
+
+The price is that $P$ and AOL come from different executions; with stable runs
+(standard deviation below 1\%) this is acceptable. On November~9 we checked all
+result files for multiplexing percentages: there are none.
+
+% =====================================================================
+\section{CPU frequency}
+
+\begin{Verbatim}
+scaling_driver: intel_cpufreq      scaling_governor: schedutil      no_turbo: 0
+cpuinfo_min/max_freq: 1200000 / 3300000 kHz
+available governors: conservative ondemand userspace powersave performance schedutil
+\end{Verbatim}
+
+\id{intel_cpufreq} is \id{intel_pstate} in passive mode, so the generic
+governors can be used. With \id{schedutil} and turbo, the frequency moves
+between 1.2 and 3.3\,GHz depending on load and temperature. For final
+measurements we plan, after TA approval, the \id{performance} governor and turbo
+off (fixed 2.5\,GHz), restoring the original values afterwards.
+
+% =====================================================================
+\section{Kernel tiering state}
+
+\begin{Verbatim}
+$ uname -r; cat /proc/sys/kernel/numa_balancing; cat /sys/kernel/mm/numa/demotion_enabled
+6.8.0-147-generic
+1
+false
+$ cat /sys/devices/virtual/memory_tiering/memory_tier*/nodelist
+0-1                       (a single tier: memory_tier4)
+\end{Verbatim}
+
+\begin{itemize}
+  \item \textbf{NUMA balancing is on.} It could move our pages during a run.
+        During E1 the system-wide counter \id{numa_pages_migrated} grew by
+        only 209 pages, against about 500\,000 pages in our buffers, so it did
+        not matter there. It should still be off for final runs.
+  \item \textbf{Both nodes are in the same memory tier.} Promotion and demotion
+        only move pages between tiers, so NBT and TPP would never migrate
+        anything. Taking node~1's CPUs offline, as the authors do, is probably
+        not enough, since the tier depends on the abstract distance set by the
+        memory driver (to be verified). The artifact contains a module,
+        \id{run/colloid/tpp/tierinit/tierinit.c}, that moves node~1 to a lower
+        tier, but it relies on helpers defined in the Colloid kernel patch.
+\end{itemize}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Experiment & Works on the stock kernel? \\
+\midrule
+E1 (static placements) & yes (\id{numactl}, \id{numa_alloc_onnode}) \\
+E2 (counters, calibration of $K$) & yes \\
+SOAR profiling & yes, with \id{perf record -d} (Section~\ref{sec:pebs}) \\
+SOAR placement (\id{LD_PRELOAD} interception) & yes by code review; not tested \\
+E3 baselines NBT, TPP & no: two memory tiers needed \\
+E3 baselines Nomad, Colloid & no: custom kernels \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% =====================================================================
+\section{The authors' artifact (SoarAlto)}
+
+\subsection{Structure}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.25\linewidth}X}
+\toprule
+Path & Content \\
+\midrule
+\id{src/microbenchmark/} & pointer-chasing and sequential microbenchmark (E1) \\
+\id{src/soar/} & SOAR: allocation tracing (\id{prof/ldlib.c}), sampling (\id{run/prof.sh}), object scoring (\id{run/proc_obj_e.py} $\rightarrow$ \id{obj_stat.csv}), placement by interception (\id{interc/ldlib.c}, policy in \id{check_trace}), patches (\id{nbt.patch}, \id{gapbs.patch}) \\
+\id{src/alto/} & kernel patches and build scripts for TPP, NBT, Nomad, Colloid, with and without ALTO \\
+\id{run/} & \id{setup.sh}, \id{config.sh}, and \id{bc-urand/} (the only workload with a run directory) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Findings that matter on our machine}
+
+\begin{enumerate}
+  \item \textbf{SOAR does not need the authors' kernel.} The SOAR README asks for
+        Linux 5.18 with \id{nbt.patch}. By inspection, the only part of the
+        patch SOAR uses is a \id{pebs:pebs} tracepoint (instruction address,
+        data address, timestamp); the rest concerns NBT migrations. Our PEBS
+        format has no timestamp, so the tracepoint would be useless anyway, and
+        \id{perf record -d} replaces it (Section~\ref{sec:pebs}).
+  \item \textbf{Slow-tier emulation.} The authors lower the uncore frequency of
+        the remote socket to 500\,MHz (about 190\,ns latency) through
+        \id{/sys/devices/system/cpu/intel_uncore_frequency}. This driver is not
+        available on our machine. The alternative is writing MSR \id{0x620},
+        which needs TA approval; otherwise we keep the natural remote latency.
+  \item \textbf{Local DRAM capacity is limited with the GRUB \id{memmap=}
+        parameter}, a persistent boot change that conflicts with the TA rule
+        that the stock kernel stays the default. Reserving 1\,GB huge pages on
+        node~0 is a possible alternative (untested).
+  \item \textbf{Baselines} are built by scripts that switch kernel version,
+        patch, install and update the bootloader. They must be adapted to the
+        one-time GRUB boot procedure. ``Colloid'' in the artifact is
+        Colloid-TPP, with a Skylake-specific patch.
+  \item \textbf{Scripts must be read before running.} \id{src/soar/run/prof.sh}
+        calls \id{check_cxl_conf}, which disables the NMI watchdog, ASLR, KSM,
+        NUMA balancing, THP, hyper-threading, turbo and swap and takes node~1's
+        CPUs offline. It must not be run as is.
+\end{enumerate}
+
+\subsection{SOAR on Haswell}
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.27\linewidth}X}
+\toprule
+Phase & Work required \\
+\midrule
+Allocation tracing (\id{prof/ldlib.c}) & change the hard-coded output path; may need a fix for recent \id{g++} (\id{throw(std::bad_alloc)}) \\
+Sampling (\id{run/prof.sh}) & replace the tracepoint with \id{perf record -d} (done in principle); align the \id{perf} clock with the \id{rdtsc} timestamps of \id{ldlib.c}; fix hard-coded paths \\
+Object scoring (\id{proc_obj_e.py}) & Haswell event names; recalibrated $a$, $b$ and AOL thresholds (40, 45, 60, 80) \\
+Placement (\id{interc/ldlib.c}) & replace the call-site addresses in \id{check_trace} with ours \\
+Workloads & GAPBS built with \id{-no-pie} (done); Intel MLC not available \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% =====================================================================
+\section{System settings and tools}
+
+\begin{Verbatim}
+THP: always [madvise] never      ASLR: 2      KSM: 0      SMT: on
+GRUB_DEFAULT=0   GRUB_TIMEOUT_STYLE=hidden   GRUB_TIMEOUT=0   empty command lines
+1 GB huge pages on node 0: 0
+df: 162 GB free; /, /boot and /home on the same partition
+\end{Verbatim}
+
+\begin{itemize}
+  \item \textbf{THP} is \id{madvise}: plain \id{malloc} does not get huge pages.
+        Our pointer chase therefore also suffers TLB misses with 4\,KB pages.
+  \item \textbf{ASLR} is on. With \id{-no-pie}, the call-site addresses SOAR
+        relies on should stay fixed, so ASLR may not need to be disabled.
+  \item \textbf{GRUB}: \id{GRUB_DEFAULT=0} boots the first menu entry, and the
+        menu is hidden with no timeout. A newly installed custom kernel with a
+        higher version could become the default, and could not be avoided by
+        hand at boot. This must be fixed before any custom kernel.
+  \item \textbf{Tools}: \id{gcc}, \id{make} and \id{libnuma-dev} were missing.
+        We installed \id{build-essential} and \id{libnuma-dev} with \id{apt}.
+\end{itemize}
+
+% =====================================================================
+\section{First measurements with the microbenchmark}
+\label{sec:micro}
+
+\textbf{Conditions:} unmodified microbenchmark, one thread on node~0, the whole
+process's memory on node~0 or node~1 (\id{numactl --membind}), 1\,GiB buffer.
+
+\subsection{Quick timings}
+
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+Pattern (\id{-i 3}) & Node 0 (s) & Node 1 (s) & Slowdown \\
+\midrule
+Pointer chasing & 15.2 & 22.0 & +45\% \\
+Sequential read & 8.9 & 11.6 & +30\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The low-MLP pattern slows down more, as the paper predicts. These times include
+the construction and shuffling of the list.
+
+\subsection{Counters (\texttt{-i 9}, 3 runs per configuration)}
+
+\begin{center}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Configuration & Time (s) & Latency & MLP & AOL & $P$ & Slowdown \\
+\midrule
+Pointer chasing, node 0 & 25.49 & 603 & 3.7 & 162 & 0.76 & --- \\
+Pointer chasing, node 1 & 37.01 & 988 & 4.2 & 236 & 0.79 & +45\% \\
+Sequential, node 0 & 23.46 & 183 & 11.7 & 16 & 0.66 & --- \\
+Sequential, node 1 & 31.42 & 252 & 12.3 & 21 & 0.74 & +34\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Latency and AOL are in cycles. $P$ is similar for the two patterns, while AOL
+differs by a factor of~10, which is the kind of difference the model needs.
+Latency and MLP in this table are not reliable (Section~\ref{sec:anomaly}).
+
+\subsection{Pointer chasing without the setup phase}
+
+The setup phase is the same for any number of iterations. Subtracting a run with
+\id{-i 1} from the run with \id{-i 9} leaves 8 traversals, about 134 million
+steps:
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Quantity (\id{-i 9} minus \id{-i 1}) & Node 0 & Node 1 \\
+\midrule
+Time per step & \textbf{$\approx$102\,ns} & \textbf{$\approx$154\,ns} \\
+Core cycles per step & $\approx$253 & $\approx$383 \\
+$C$ per step & $\approx$254 & $\approx$385 \\
+Requests per step & 1.35 & 1.38 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The remote node is about \textbf{1.5$\times$} slower, against about 2.1$\times$
+(90 vs 190\,ns) in the paper. The time per step includes TLB misses, so it is
+not a pure memory latency. Our slow tier is therefore milder than the paper's,
+and this must be stated in the methodology.
+
+\subsection{Counter anomaly}
+\label{sec:anomaly}
+
+A pointer chase is serial, so its MLP should be close to~1. We measure 4.2--5.2,
+also after removing the setup phase, and a latency of 791 cycles while one step
+takes 253 cycles: a request cannot be outstanding for longer than the step that
+waits for it. Hence \textbf{$O$ (\id{offcore_requests_outstanding.demand_data_rd})
+is not reliable on this machine}, at least for this pattern. The cause is
+unknown (a Haswell erratum or an effect of hyper-threading are possible).
+
+$C$ matches the real cycles per step, so \textbf{AOL $= C/N$ remains usable}.
+The authors' \id{proc_obj_e.py} computes it the same way. Latency and MLP
+derived from $O$ will not be reported for pointer chasing.
+
+% =====================================================================
+\section{First GAPBS results}
+
+\textbf{Conditions:} GAPBS built with \id{-no-pie}; graph \id{urand24}
+(16.8\,M vertices, 2.2\,GB) read once into the page cache from node~0; 8 OpenMP
+threads on cores \id{0,2,...,14}; memory on node~0 or node~1; 3 runs with each
+event set. Arguments: \id{bc -i4 -n1}, \id{pr -n1}, \id{bfs -n8}, \id{cc -n8}.
+\id{sssp} needs a weighted graph and \id{tc} is very slow, so they were not
+run. Summary: \id{gapbs_summary.log} in the repository.
+
+\begin{center}
+\small
+\begin{tabular}{lrrrrll}
+\toprule
+Workload & Local (s) & Remote (s) & Slowdown & Whole process & $P$ (loc./rem.) & AOL (loc./rem.) \\
+\midrule
+\id{bc}  & 17.32 & 23.75 & \textbf{+37.1\%} & +35.2\% & 0.78 / 0.84 & 46 / 63 \\
+\id{bfs} & 0.24  & 0.33  & \textbf{+35.4\%} & +25.2\% & 0.56 / 0.64 & 35 / 48 \\
+\id{pr}  & 4.29  & 5.74  & \textbf{+33.8\%} & +30.1\% & 0.87 / 0.90 & 28 / 38 \\
+\id{cc}  & 0.59  & 0.76  & \textbf{+29.1\%} & +23.6\% & 0.65 / 0.72 & 62 / 82 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The slowdown uses GAPBS's \emph{Average Time}, which covers the algorithm only.
+
+\begin{itemize}
+  \item The slowdowns are close to each other (29--37\%), partly because our
+        slow tier is only 1.5$\times$ slower. A narrow range leaves little for a
+        predictor to explain.
+  \item The correlation between local $P$ and slowdown is weak (about 0.2), but
+        four points say nothing about the hypotheses yet.
+  \item The counters cover the whole process, including graph loading. For
+        \id{bfs} and \id{cc} the algorithm is a small part of the run, so their
+        $P$ and AOL mostly describe loading. More trials (\id{-n}) are needed.
+\end{itemize}
+
+% =====================================================================
+\section{PEBS sampling test (November 10)}
+\label{sec:pebs}
+
+\textbf{Question:} can we collect what SOAR needs (L3-miss samples with data
+address and time) on the stock kernel?
+
+\begin{Verbatim}
+sudo perf record -d -e mem_load_uops_retired.l3_miss:P -c 3001 \
+     -o ~/hotness/results/pebs_test.data -- \
+     numactl --cpunodebind=0 --membind=0 ./bench -R 0.0 -i 1 -A 1024
+\end{Verbatim}
+
+\id{:P} requests precise sampling (PEBS), \id{-c 3001} takes one sample every
+3001 events as the authors do, and \id{-d} records the data address.
+
+\textbf{Result:} 17\,814 samples. Where they fall:
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Function & Samples \\
+\midrule
+\id{shuffle} (list setup) & 33.4\% \\
+\id{pc_thread} (traversal; \id{ptr_chase} is inlined here) & 31.4\% \\
+\id{init_ptr_buf} (list setup) & 31.1\% \\
+kernel & $\approx$4\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Samples inside \id{pc_thread} look like this (time in seconds, data address,
+instruction address, function):
+
+\begin{Verbatim}
+1894399.201677:     749a8bdbfc80     5c6c278f00e6 pc_thread
+1894399.201993:     749a88f4f640     5c6c278f00e6 pc_thread
+1894399.202305:     749a89de5080     5c6c278f00e6 pc_thread
+\end{Verbatim}
+
+Three independent checks show that the samples are correct:
+\begin{enumerate}
+  \item The data addresses differ at every sample and are multiples of 64: they
+        are list nodes, one cache line each. The instruction address is always
+        the same load of the loop.
+  \item The addresses lie within about 57\,MB, consistent with the list being
+        shuffled in blocks of about 64\,MB.
+  \item Samples are about 0.316\,ms apart, i.e.\ 3001 misses, or
+        \textbf{$\approx$105\,ns per miss}: the same as the 102\,ns per step
+        measured from execution times.
+\end{enumerate}
+
+\textbf{Conclusions:}
+\begin{itemize}
+  \item \textbf{SOAR profiling is feasible on this machine}, on the stock
+        kernel, without the authors' patch or Linux 5.18.
+  \item The timestamps come from the kernel's \id{perf} clock (time since boot),
+        not from the PEBS record. The remaining work is to align them with the
+        \id{rdtsc} timestamps written by \id{ldlib.c}, e.g.\ by switching
+        \id{ldlib.c} to the same clock or by selecting a clock with the
+        \id{-k} option of \id{perf record} (to be tested).
+  \item With one iteration, two thirds of the misses come from the setup phase.
+        This explains why whole-program counters were dominated by setup.
+\end{itemize}
+
+% =====================================================================
+\section{Microbenchmark changes for E1 (November 10)}
+\label{sec:changes}
+
+E1 runs two threads at the same time: one chases pointers in buffer~A (a
+1\,GiB linked list, low MLP), the other reads buffer~B sequentially (a 1\,GiB
+array, high MLP). The array is the \emph{hot} data: with \id{-i 9} it is read
+$9 \times 26 = 234$ times, about 3.9 billion cache-line accesses, against about
+151 million for the list. The unmodified program could not run this experiment.
+We made three changes on branch \id{haswell-port} of our clone of SoarAlto.
+
+\begin{enumerate}
+  \item \textbf{Pinning on one socket.} Thread $i$ was pinned to CPU $i$, so the
+        two threads ran on CPUs 0 and 1, which are on different sockets here.
+        Now thread $i$ is pinned to CPU $2i$. Check: the two worker threads run
+        on CPUs 0 and 2, both on node~0.
+  \item \textbf{One memory node per buffer.} Both buffers came from plain
+        \id{malloc}; the existing function \id{init_buf} (which calls
+        \id{numa_alloc_onnode}) was never used, and option \id{-r} had no
+        effect. Both threads now use \id{init_buf} and free with
+        \id{numa_free}; \id{-r} selects the node of buffer~A, and a new option
+        \id{-b} selects the node of buffer~B. Buffer~B is allocated 4096 bytes
+        larger, because \id{bandwidth()} writes 8 bytes past its end, which
+        could crash once the buffer ends exactly at a page boundary. Check with
+        \id{numastat}: about 1025\,MB on node~0 and 1024\,MB on node~1 with
+        \id{-r 0 -b 1}.
+  \item \textbf{Per-thread timing.} The program printed nothing. Each thread now
+        measures only its work loop with \id{clock_gettime(CLOCK_MONOTONIC)}
+        and prints \id{pc_time_s} or \id{bw_time_s}. Check: with \id{-i 1},
+        \id{pc_time_s} is 1.72\,s, i.e.\ 102\,ns $\times$ 16.8\,M steps, as
+        expected.
+\end{enumerate}
+
+% =====================================================================
+\section{E1: first results (November 10, provisional)}
+
+Four placements, 5 repetitions each, \id{-i 9}, both buffers 1\,GiB. The names
+refer to the hotness-based view, in which the array is the hot data.
+
+\begin{center}
+\small
+\begin{tabular}{llrrrr}
+\toprule
+Configuration & List / array & \multicolumn{2}{c}{Pointer chasing} & \multicolumn{2}{c}{Sequential} \\
+ & node & time (s) & slowdown & time (s) & slowdown \\
+\midrule
+\id{all_dram} & 0 / 0 & 15.74 & --- & 22.62 & --- \\
+\id{all_slow} & 1 / 1 & 24.16 & +53.5\% & 30.94 & +36.8\% \\
+\id{hot_on_dram} & 1 / 0 & 23.28 & +47.8\% & 22.69 & +0.3\% \\
+\id{cold_on_dram} & 0 / 1 & 16.06 & +2.0\% & 30.85 & +36.4\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{The placement stayed static:} \id{numa_pages_migrated} grew by 209 pages
+in the whole system during the 20 runs.
+
+\textbf{Reading the results:}
+\begin{itemize}
+  \item \textbf{In relative terms, \id{cold_on_dram} wins.} Placing the cold but
+        latency-bound list in DRAM costs the two threads about 38\% in total,
+        against 48\% for the hotness-based choice. This is the direction of
+        H1.
+  \item \textbf{The sequential read suffers more than expected (+36\%).} It
+        reads about 11\,GB/s from node~0 and 8\,GB/s from node~1
+        (234\,GiB in 22.6 and 30.9\,s). On this machine the remote array seems
+        limited by the bandwidth of the link between the sockets, not only by
+        latency, so its MLP protects it less than in the paper.
+  \item \textbf{In seconds lost, the two placements are close:} about 7.6\,s for
+        \id{hot_on_dram} and 8.5\,s for \id{cold_on_dram}, because the array
+        thread does far more work.
+  \item \textbf{The decisive metric is missing:} the time of the whole program.
+        The program ends with the slower thread, and the list thread also spends
+        about 10\,s in its setup, which accesses memory too. A run with
+        whole-program time (3 repetitions) is the next step.
+\end{itemize}
+
+% =====================================================================
+\section{Original state of the machine}
+
+To be restored after any experiment that changes it.
+
+\begin{center}
+\small
+\begin{tabular}{ll}
+\toprule
+Setting & Original value \\
+\midrule
+\id{scaling_governor} & \id{schedutil} \\
+\id{intel_pstate/no_turbo} & \id{0} \\
+\id{scaling_min_freq} / \id{scaling_max_freq} & 1200000 / 3300000 \\
+\id{kernel.numa_balancing} & 1 \\
+\id{numa/demotion_enabled} & false \\
+\id{kernel.nmi_watchdog} & 1 \\
+\id{kernel.perf_event_paranoid} & 4 \\
+\id{transparent_hugepage/enabled} & \id{madvise} \\
+\id{kernel.randomize_va_space} & 2 \\
+\id{ksm/run} & 0 \\
+\id{smt/control} & \id{on} \\
+1\,GB huge pages on node 0 & 0 \\
+\id{GRUB_DEFAULT} / \id{GRUB_TIMEOUT} / \id{GRUB_TIMEOUT_STYLE} & 0 / 0 / \id{hidden} \\
+Kernel command line additions & none \\
+Kernel & \id{6.8.0-147-generic} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Changes made so far:} packages \id{build-essential} and \id{libnuma-dev};
+files under \id{~/hotness/}; a repository-local git identity in our clone of
+SoarAlto. Possibly also the \id{msr} module and \id{msr-tools}, suggested by
+another chat; whether they were run is unconfirmed (see \id{Commands_Log.md}).
+No system setting has been changed.
+
+% =====================================================================
+\section{Open questions for the TA}
+
+\begin{enumerate}
+  \item During measurements, may we set the governor to \id{performance},
+        disable turbo and set \id{numa_balancing} to 0, restoring the values
+        right afterwards?
+  \item Both NUMA nodes are in one memory tier, so NBT and TPP cannot migrate.
+        Is there a recommended way to make node~1 a lower tier?
+  \item The artifact limits local DRAM with the GRUB \id{memmap=} parameter. Is
+        that allowed (e.g.\ for a one-time boot only), or should we use another
+        method, such as 1\,GB huge pages?
+  \item The uncore frequency driver is not available. May we set the remote
+        uncore frequency through MSR \id{0x620}, or should we keep the natural
+        remote latency (1.5$\times$)?
+  \item Which of the artifact's settings (HT, swap, ASLR, KSM, THP, NMI
+        watchdog, node~1's CPUs offline) may we apply during our runs?
+  \item We installed \id{build-essential} and \id{libnuma-dev}. Is that fine,
+        and may we also install \id{vmtouch} and \id{libgfortran5}?
+  \item Could we get CloudLab access (c220g5, the authors' Skylake platform) for
+        the baselines?
+  \item Who else uses this machine, and is a remote console available if a
+        kernel does not boot?
+\end{enumerate}
+
+% =====================================================================
+\section{Next steps}
+
+\begin{enumerate}
+  \item E1 with whole-program time; copy \id{e1.log} to the repository and plot.
+  \item Repeat E1 and the counter measurements under stable settings, after TA
+        approval.
+  \item E2: more varied workloads (more GAPBS trials, a pointer chase with $N$
+        independent chains to vary MLP in a controlled way), then fit $a$ and
+        $b$.
+  \item SOAR: align the \id{perf} and \id{ldlib.c} clocks, port the scoring
+        script, then try one workload.
+  \item Record the commit hashes of SoarAlto and GAPBS.
+  \item Before any custom kernel: persistent journal, \id{/boot} space check,
+        one-time GRUB boot.
+\end{enumerate}
+
+\end{document}
