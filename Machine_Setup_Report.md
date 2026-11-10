@@ -27,6 +27,8 @@ All commands below are **read-only**, except `sudo perf stat`, which only reads 
 | Uncore frequency driver | not available | ❌ authors' script cannot work here (see §10) |
 | Toolchain | Initially missing; installed with `apt`, microbenchmark built | ✅ (see §10.4) |
 | First measurements | Slow-tier emulation works: pointer chasing ~102 ns local, ~154 ns remote (~1.5×) | ✅ provisional (see §11) |
+| PEBS sampling test | `perf record -d` on the stock kernel gives data addresses and timestamps | ✅ SOAR profiling feasible here (see §13) |
+| **E1 (H1)** | Cold-on-DRAM +12% vs Hot-on-DRAM +43% total time | ✅ **H1 supported**, provisional (see §14) |
 | GAPBS (first data) | `bc`, `bfs`, `pr`, `cc` on `urand24`: +29% to +37% on the remote node | ✅ provisional (see §12) |
 | Counter anomaly | `offcore_requests_outstanding.demand_data_rd` unreliable; `cycles_with_demand_data_rd` consistent | ⚠️ derive AOL directly (see §11.3) |
 | Disk | 162 GB free; `/boot` on the root partition | ✅ |
@@ -281,10 +283,12 @@ Haswell porting problems:
 3. ~~Read-only checks on the machine: PEBS format, `mem_load_uops_retired.l3_miss`, presence of `intel_uncore_frequency`, free disk space.~~ Done (§10).
 4. ~~Clone SoarAlto and GAPBS in the home directory.~~ Done. Still to do: confirm the findings of §6 on the actual code.
 5. ~~Build the microbenchmark and take first measurements.~~ Done (§11), provisional. Repeat under stable settings after TA approval.
-6. Check that no result file contains multiplexing (§12.3).
-7. Implement the three microbenchmark changes for E1 (§6.4), then run E1.
-8. Repeat `bfs` and `cc` with more trials, and add more varied workloads for E2 (§12.2).
-9. Before any custom kernel: persistent journal, `/boot` space check, one-time GRUB boot (TA rules).
+6. ~~Check that no result file contains multiplexing.~~ Done (§12.3).
+7. ~~Implement the three microbenchmark changes for E1, then run E1.~~ Done (§14), provisional.
+8. Repeat E1 under stable settings after TA approval; test H1′ once a tiering system is available.
+9. Port SOAR profiling: align the `perf` and `ldlib.c` clocks (§13).
+10. Repeat `bfs` and `cc` with more trials, and add more varied workloads for E2 (§12.2).
+11. Before any custom kernel: persistent journal, `/boot` space check, one-time GRUB boot (TA rules).
 
 ## 10. Additional read-only checks (2026-11-09)
 
@@ -370,7 +374,7 @@ $ cat .../cpu{0,2,4,6,8,10,12,14}/topology/thread_siblings_list
 
 ### 11.1 Whole-program results (`-i 9`, 3 runs)
 
-Time and P come from the P run; the other metrics from the AOL run. No multiplexing appears in the `seq_mem1` output inspected in full; the other files are still to be checked (§12.3).
+Time and P come from the P run; the other metrics from the AOL run. There was no multiplexing (checked on the raw files, §12.3).
 
 | Configuration | Time (s) | Latency (cycles) | MLP | AOL (cycles) | P | Slowdown |
 |---|---|---|---|---|---|---|
@@ -434,10 +438,88 @@ Slowdown is computed on GAPBS's `Average Time` (algorithm only), as the mean of 
 - `perf` counters cover the whole process, including graph loading. For `bfs` and `cc`, the algorithm takes only a small part of the 3–6 s total, so their P and AOL mostly describe the loading. More trials (`-n`) are needed. `bc` is the most reliable case, followed by `pr`.
 - Latency and MLP are not reported, because of the anomaly in §11.3.
 
-### 12.3 Pending check
+### 12.3 Multiplexing check
 
-The compact summary command removed everything in parentheses, including any multiplexing percentages, so the summary cannot rule out multiplexing. To be checked on the raw files:
+The compact summary command removed everything in parentheses, including any multiplexing percentages, so the raw files were checked separately:
 
 ```bash
 grep -lE '\([0-9.]+%\)' ~/hotness/results/*/*.txt || echo "no multiplexing"
 ```
+
+Result: **no multiplexing** in any microbenchmark or GAPBS result file.
+
+## 13. PEBS sampling test (2026-11-10)
+
+Goal: check whether SOAR's profiling can work on the stock kernel, since PEBS format 2 has no timestamp in the record (§10.1).
+
+```bash
+sudo perf record -d -e mem_load_uops_retired.l3_miss:P -c 3001 -o ~/hotness/results/pebs_test.data -- numactl --cpunodebind=0 --membind=0 ./bench -R 0.0 -i 1 -A 1024
+sudo perf report -i ~/hotness/results/pebs_test.data --stdio --sort dso,sym
+sudo perf script -i ~/hotness/results/pebs_test.data -F time,ip,sym,addr | grep pc_thread | head -10
+```
+
+Results:
+
+- 17,814 samples were recorded.
+- **Where:** `shuffle` 33.4%, `pc_thread` 31.4% (the traversal; `ptr_chase` is inlined), `init_ptr_buf` 31.1%, kernel about 4%. With one iteration, about two thirds of the misses come from the setup phase, which confirms §11.
+- **Fields:** `perf script` prints the data address before the instruction address. In `pc_thread`, the instruction address is constant (`5c6c278f00e6`) and **the data address changes at every sample**.
+- **Three consistency checks:**
+  1. All data addresses are multiples of 64, i.e., the 64 B list nodes.
+  2. Consecutive samples fall within about 57 MB, consistent with the shuffle in 64 MB blocks.
+  3. Samples are about 0.316 ms apart, i.e., 3001 misses, which gives **about 105 ns per miss**. This matches the ~102 ns per step of §11.2, obtained independently from timings.
+- **Timestamps** are the kernel's time since boot, in seconds. For kernel instructions, the data address field is a constant value (`1400058b4`), which is irrelevant for SOAR.
+
+**Conclusion:** `perf record -d` provides data addresses and timestamps on the stock kernel, so **SOAR profiling is feasible on this machine without `nbt.patch` or Linux v5.18**. What remains is to align the `perf` clock with the `rdtsc` timestamps written by `ldlib.c` (Roadmap, Phase 8.3).
+
+## 14. E1: hotness versus criticality (2026-11-10, provisional)
+
+### 14.1 Microbenchmark changes
+
+On the `haswell-port` branch of SoarAlto, on the server (3 files, 11 lines changed, plus timing):
+
+1. **Pinning:** `stick_this_thread_to_core(2*header->thread_idx)` in `pc_thread` and `bw_thread`, so the two threads run on CPUs 0 and 2, i.e., two physical cores of node 0. This relies on this machine's interleaved CPU numbering. Verified with `ps -eLo tid,psr,comm`.
+2. **Per-buffer placement:** both buffers are allocated with the existing `init_buf` (`numa_alloc_onnode`) instead of `malloc`, and freed with `numa_free`. New option `-b` for buffer B's node (`-r` for buffer A already existed). Buffer B gets one extra page, because `bandwidth()` writes 8 bytes past its end. Verified with `numastat -p`: A on node 0, B on node 1.
+3. **Per-thread timing:** `clock_gettime(CLOCK_MONOTONIC)` around the main loop only, excluding setup (list construction and shuffle for A; `memset` and the first warm-up read for B). Output: `pc_time_s` and `bw_time_s`. Sanity check: `pc_time_s` with `-i 1` is 1.72 s, as predicted from ~102 ns × 16.8 M steps.
+
+### 14.2 Setup
+
+`./bench -R 0.5 -r <A node> -b <B node> -i 9 -A 1024 -B 1024`: buffer A (pointer chasing, "cold") and buffer B (sequential, "hot", 26× more passes) are both 1 GiB. Configurations are interleaved within each repetition. The program's total time is measured with the shell's `time`. Governor, turbo and `numa_balancing` were left at their original values.
+
+| Configuration | Buffer A (cold) | Buffer B (hot) |
+|---|---|---|
+| All-on-DRAM | node 0 | node 0 |
+| All-on-Slow | node 1 | node 1 |
+| Hot-on-DRAM | node 1 | node 0 |
+| Cold-on-DRAM | node 0 | node 1 |
+
+Two runs: 5 repetitions with per-thread times (`e1_provisional.log`), then 3 repetitions adding total time (`e1_total.log`). Both logs are in this repository.
+
+### 14.3 Results
+
+Mean ± standard deviation, and slowdown with respect to All-on-DRAM (second run, 3 repetitions):
+
+| Configuration | Total time (s) | Slowdown | Pointer-chasing loop (s) | Sequential loop (s) |
+|---|---|---|---|---|
+| All-on-DRAM | 28.95 ± 0.38 | — | 15.65 ± 0.01 | 22.10 ± 0.06 |
+| All-on-Slow | 43.21 ± 0.16 | **+49.2%** | 24.15 ± 0.00 (+54.3%) | 30.84 ± 0.05 (+39.5%) |
+| **Hot-on-DRAM** | 41.54 ± 0.15 | **+43.5%** | 23.30 ± 0.00 (+48.9%) | 22.03 ± 0.01 (−0.3%) |
+| **Cold-on-DRAM** | 32.46 ± 0.07 | **+12.1%** | 15.98 ± 0.01 (+2.1%) | 30.83 ± 0.06 (+39.5%) |
+
+The first run (5 repetitions) gives the same per-thread times within 1–2%. All standard deviations are below 1.5% of the mean.
+
+Kernel page migrations during the first run: `numa_pages_migrated` went from 220,160 to 220,369 (209 pages, system-wide), against about 524,000 pages in the two buffers per run. The placement was effectively static.
+
+### 14.4 Analysis
+
+- **H1 is supported.** With the same fast-tier capacity, Hot-on-DRAM is **28% slower** than Cold-on-DRAM (41.54 s versus 32.46 s). The difference is about 60 times the run-to-run standard deviation.
+- Placing the hot buffer in DRAM recovers only 1.7 of the 14.3 s lost by All-on-Slow; placing the cold buffer in DRAM recovers 10.8 s (about 75%).
+- **The choice of metric matters.** Looking only at the main loops, the two mixed configurations lose a similar number of seconds (about 7.6 s and 8.7 s). Total time separates them because the list's setup phase (construction and shuffle) is also latency-bound, and the pointer-chasing thread determines when the program ends.
+- **The sequential thread slows down by about 39% on the remote node**, more than expected for a high-MLP pattern. Its throughput drops from about 11.4 to 8.2 GB/s, which suggests a bandwidth limit of the inter-socket link rather than latency (to be verified).
+
+### 14.5 Limitations
+
+- Provisional measurements: governor, turbo and `numa_balancing` not fixed.
+- 3 repetitions for total time.
+- One microbenchmark only. The emulated slow tier is about 1.5× slower than local memory, against about 2.1× in the paper.
+- H1′ (migration overhead) is not tested: it needs a tiering system.
+- To check in the paper: which metric it uses for Fig. 1 (total time is assumed here).
