@@ -8,6 +8,7 @@
 \usepackage{booktabs}
 \usepackage{xcolor}
 \usepackage{url}
+\usepackage{float}
 
 % Visible placeholder: remove every \todo before submitting.
 \newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
@@ -40,7 +41,13 @@ Tiered memory systems combine a small, fast tier (local DRAM) with a larger,
 cheaper but slower tier (e.g., CXL-attached memory), so the way data is
 distributed across the two tiers determines how many memory stalls an
 application suffers. State-of-the-art tiering systems (TPP, NBT, Nomad and
-Colloid) make this decision based on access frequency, or \emph{hotness}.
+Colloid) make this decision based on access frequency, or \emph{hotness}. 
+
+TPP (Transparent Page Placement) was designed by Maruf et al. (ASPLOS 2023), and simply uses a lightweight mechanism to promote pages from CXL memory to local DRAM and demote them back.
+
+Nomad (Non-Exclusive Memory Tiering via Transactional Page Migration), proposed by Xiang et al. (OSDI 2024), uses non-exclusive memory placement. Page are not exclusively placed on fast tier or CXL memory, but copies of hot data can be kept in CXL memory to avoid memory thrashing. 
+
+Colloid, proposed by Vuppalapati et al. (SOSP 2024) adds another placement condition based on the following fact. Effective access latency of default tier might not be equal to hardware specified latency in some cases (multiple in-flight requests). Hence placement of hot data in default tier might not be as efficient as placing them in alternative tiers. Under some circumstances, the latency of default tier might be $2.5 \times$ more than alternative tiers. Colloid then balances page placements to improve average access latency. 
 
 Liu et al.\ (OSDI 2025) argue that hot data is not necessarily
 performance-critical. Out-of-order cores overlap independent misses, so accesses
@@ -68,103 +75,224 @@ machines used by the authors, which affects how the metrics can be measured
 \section{Questions, Hypotheses, and Tests}
 
 \subsection{Methodology and Testing Environment Updates}
-\todo{Machine actually used and how it differs from the assumptions of the
-proposal and from the paper.}
 
-\todo{Changes to the methodology: counters used, measurement procedure, how the
-slow tier is emulated.}
+We launched basic commands on the remote server to fully characterize it. The results are reported below. 
+
+\begin{itemize}
+  \item CPU Intel Xeon E5-2680 v3. It has 2 physical processors, 12 cores per processor so 24 in total, 2 threads per core so 48 in total.
+  \item There are 2 NUMA nodes, each having 126\,GB of memory. 
+  \item The Kernel is an Ubuntu \texttt{6.8.0-147-generic} Kernel.
+  \item Single memory tier (\texttt{memory\_tier4}, nodes 0-1). 
+  \item DDR4 1600/1866/2133 memories
+  \item Total memory of about 252\,GB ($2 \times 126$\,GB)
+\end{itemize}
+
+The machines used for the experiments in the paper were: 
+
+\begin{itemize}
+    \item  CloudLab dual-socket Intel Skylake server with 2 10-cores CPUs and 96\,GB DD4 DRAM per socket. There, CXL is emulated by decreasing uncore frequency and disabling cores on one NUMA node. 
+    \item Intel Sapphire Rapids server with 32 cores and 192\,GB DDR5 DRAM per socket, and ASIC-based 128\,GB CXL memory expander. 
+\end{itemize}
+
+In their experiment, they used 8 threads, with memory bandwidth 2.3--21\,GB/s and RSS of 8--35\,GB. 
+
+In the paper, they used the following counters to track AOL. LLC stands for Last Level Cache. They refer to LLC stalls as CPU stalls caused by LLC misses.
+
+\begin{itemize}
+    \item Number of LLC stalls in L3 tier
+    \item Number of cycles
+    \item Cycles with pending requests
+    \item Number of pending requests per cycle
+    \item Number of requests to uncore
+\end{itemize}
+
+
+ We now compare our machine with theirs. The CPUs are not the same, and this has two consequences. First, the machine has no CXL memory expander, and it does not expose an uncore-frequency driver, so we cannot slow down a node as the authors did on Skylake. Our slow tier is simply the remote NUMA node (node~1), which is only about $1.5\times$ slower than local DRAM (Section~3.1), against about $2.1\times$ for the paper's emulated tier. We therefore expect smaller slowdowns than in the paper. Second, we have more threads available (48 in total, instead of 8), but we can limit them with thread pinning.
+
+ We also noticed that we did not have all counters at hand. Hence, we need to make following modifications:
+
+ \begin{itemize}
+     \item The event \path{cycle_activity.stalls_l3_miss} does not exist on Haswell. We use \path{cycle_activity.stalls_l2_pending} as a proxy for the LLC stalls. It also counts stalls on L2 misses that hit in L3, so it overestimates $P$.
+     \item The other counters are available.
+ \end{itemize}
+
 
 \subsection{Current Status of Research Questions}
 
 \subsubsection{Q1: Can hotness be a faithful metric to measure performance?}
-\textbf{Insight:} \todo{I1 from the proposal.}
 
-\textbf{Experiment:} \todo{E1, and the test of H1$'$.}
+\textbf{Insight:} out-of-order cores overlap independent misses,
+        so high-MLP (often hot) accesses hide most of the slow-tier latency,
+        while low-MLP accesses pay all of it.
 
-\textbf{Status:} \todo{Done, partial or not started.}
+\textbf{Experiment:} Run SoarAlto microbenchmark with sequential and pointer-chasing threads the hot/cold (migration disabled) in different configurations to prove that sequential on hot and pointer-chasing on cold is not optimal. 
+
+\textbf{Status:} Partial. We adapted the microbenchmark (thread pinning, explicit node allocation, per-thread timers) and measured the four placements (Section~3.2, Figure~\ref{fig:e1}). With 10 runs under fixed CPU frequency and without NUMA balancing, the results support the hypothesis. The alternative H1$'$ (migration overhead) still needs a tiering system.
+
+
 
 \subsubsection{Q2: If not, how can a better metric be defined?}
-\textbf{Insight:} \todo{I2 from the proposal.}
 
-\textbf{Experiment:} \todo{E2, and the evaluation of H2$'$.}
+\textbf{Insight:} the average stall cycles per LLC miss vary by
+        up to 4$\times$ across workloads: MLP amortizes
+        the latency, so a predictor that ignores it (LLC stalls/cycle, $P$)
+        overestimates the slowdown of high-MLP workloads.
 
-\textbf{Status:} \todo{Done, partial or not started.}
+\textbf{Experiment:} for each workload, measure the slowdown on the
+        slow tier together with the counters for $P$, AOL and access counts;
+        calibrate $a,b$ of $K$ with the sequential/pointer-chasing
+        microbenchmarks; compare the Pearson coefficients of the three
+        predictors.
+
+\textbf{Status:} Partial. We measured $P$, AOL and the slowdown for the microbenchmark and for four GAPBS workloads (bc, bfs, pr, cc; slowdowns from $+29\%$ to $+37\%$). The calibration of $a, b$ and the comparison of the predictors have not started.
+
+
 
 \subsubsection{Q3: With this metric, can we improve first data placement (SOAR)?}
-\textbf{Insight:} \todo{I3 from the proposal.}
 
-\textbf{Experiment:} \todo{E3.}
+\textbf{Insight:} if SOAR finds critical
+        objects, it places them in DRAM at the beginning (first placement).
+        Having optimal first allocations allows us to avoid unnecessary migrations during execution.
 
-\textbf{Status:} \todo{Done, partial or not started.}
+\textbf{Experiment:} compare the slowdown of SOAR vs.\ NoTier, TPP,
+        NBT, Nomad and Colloid on the selected workloads, at 10--90\%
+        slow-tier ratios.
+
+\textbf{Status:} Not started
 
 \subsubsection{Q4: Can these elements improve PolyRack?}
-\textbf{Insight:} \todo{I4 from the proposal.}
+\textbf{Insight:} PolyRack disaggregates memory into dedicated
+        memory servers reached through CXL, which creates a
+        fast/slow memory hierarchy similar to a tiered server.
 
-\textbf{Experiment:} \todo{E4.}
-
-\textbf{Status:} \todo{Done, partial, not started, or dropped.}
+\textbf{Experiment:} run the same workloads on PolyRack with and
+        without SOAR, and compare against the traditional tiered server.
+        
+\textbf{Status:} Not started
 
 \subsection{Anomalies and Updates to the Hypothesis Tree}
-\todo{Any anomaly observed, and whether the hypothesis tree changes.
-Include the updated figure if it does.}
+
+The hypothesis tree is unchanged, but we found three anomalies in the platform that affect how the hypotheses are tested:
+
+\begin{itemize}
+    \item The LLC-stall event used by the paper does not exist on Haswell, so $P$ is measured with a proxy (Section~2.1).
+    \item The counter \path{offcore_requests_outstanding.demand_data_rd} returns inconsistent values on this machine, so we do not use it (Section~3.3).
+    \item The emulated slow tier is only about $1.5\times$ slower than local DRAM, so all slowdowns are smaller than in the paper.
+\end{itemize}
+
+A further hypothesis stated in the paper is the linear relationship between LLC stalls in fast tier and LLC stalls in slow tiers (part 3 of the article). 
 
 % =====================================================================
 \section{Progress, Results, and Analysis}
 
 \subsection{Experimental Setup}
-\todo{What has been brought up and verified on the machine.}
+We checked that we could access to the following counters of the machine:
+
+\begin{itemize}
+    \item \path{cycle_activity.stalls_l2_pending} (LLC stalls, proxy)
+    \item \path{cpu_clk_unhalted.thread} (number of cycles)
+    \item \path{offcore_requests_outstanding.cycles_with_demand_data_rd} (cycles with pending requests)
+    \item \path{offcore_requests_outstanding.demand_data_rd} (number of pending requests per cycle)
+    \item \path{offcore_requests.demand_data_rd} (number of requests to uncore)
+\end{itemize}
+
+We also measured local and remote access latencies, as the time per step of the pointer-chasing loop (TLB misses included):
+
+\begin{itemize}
+    \item local access latency: 102\,ns
+    \item remote access latency: 154\,ns, i.e.\ about $1.5\times$ the local one
+\end{itemize}
+
 
 \subsection{E1: Hotness versus Criticality}
-\todo{Configurations, number of runs, results and conclusion on H1.}
+We run a pointer-chasing thread (cold data) and a sequential read thread (hot data) at the same time, using the microbenchmark folder of the SoarAlto repository. Both threads run on node~0 (fast tier); the data of each thread is allocated on node~0 or node~1 (slow tier), which gives four configurations:
 
-\begin{figure}[h]
-\centering
-\fbox{\parbox[c][4cm][c]{0.7\linewidth}{\centering \todo{E1 plot}}}
-\caption{\todo{Caption.}}
-\label{fig:e1}
+\begin{itemize}
+    \item All-on-DRAM: both on fast tier (baseline)
+    \item All-on-Slow: both on slow tier
+    \item Hot-on-DRAM: sequential (hot) on fast tier, pointer-chasing (cold) on slow tier
+    \item Cold-on-DRAM: pointer-chasing (cold) on fast tier, sequential (hot) on slow tier
+\end{itemize}
+
+We want to show that cold data in fast tier and hot data in slow tier is more efficient than cold data in slow tier and hot data in fast tier, using the microbenchmark.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{figures/e1_slowdown.pdf}
+  \caption{E1: slowdown of each placement with respect to
+  All-on-DRAM. The pointer-chasing thread (1\,GiB list, cold) and the
+  sequential thread (1\,GiB array, hot) run at the same time on two cores of
+  node~0; node~1 is the slow tier. Governor \texttt{performance}, turbo off
+  (2.5\,GHz), NUMA balancing off. (a) Total program time, mean of 10 runs,
+  error bars show the standard deviation. (b) Time of the main loop of each
+  thread, excluding setup.}
+  \label{fig:e1}
 \end{figure}
 
-\subsection{E2: Slowdown Predictors (Preliminary)}
-\todo{Calibration of $a,b$ and comparison of the predictors.}
+We ran 10 repetitions of the four configurations, interleaved, with the CPU governor set to \texttt{performance}, turbo disabled and automatic NUMA balancing disabled, and restored the original settings afterwards. The measured frequency of the two cores was 2494\,MHz in every configuration, and only 3 pages were migrated during the whole experiment.
 
-\begin{table}[h]
-\centering
-\begin{tabular}{lcc}
-\toprule
-Predictor & Pearson & MAE \\
-\midrule
-$P$ & \todo{--} & \todo{--} \\
-$P \times K$ & \todo{--} & \todo{--} \\
-Stalls per miss (H2$'$) & \todo{--} & \todo{--} \\
-Hotness & \todo{--} & \todo{--} \\
-\bottomrule
-\end{tabular}
-\caption{\todo{Caption.}}
-\label{tab:e2}
-\end{table}
+All-on-DRAM takes $30.33 \pm 0.34$\,s. Placing the cold pointer-chasing list on the fast tier (Cold-on-DRAM, $+8.7\%$) is faster than placing the hot sequential array on the fast tier (Hot-on-DRAM, $+38.6\%$): Hot-on-DRAM is 27.5\% slower than Cold-on-DRAM ($42.05 \pm 0.22$\,s against $32.97 \pm 0.09$\,s). All-on-Slow gives $+44.3\%$.
+
+The main loops alone (panel b) do not separate the two mixed configurations: the pointer-chasing loop loses 7.3\,s when its list is on the slow tier, and the sequential loop loses 7.9\,s when its array is. The difference in total time comes from the setup phase of the list (construction and shuffle), which is also latency-bound, and from the pointer-chasing thread being the one that determines when the program ends. Moreover, the sequential loop slows down by 35\% on the slow tier, more than expected for a high-MLP pattern. Its throughput drops from about 11.0 to 8.2\,GB/s, which suggests a bandwidth limit of the inter-socket link rather than a latency effect (to be verified).
+
+These results support Hypothesis~1 on our setup. A first run of 3 repetitions with the default settings (turbo on) gave the same conclusion with slightly larger slowdowns. The alternative hypothesis H1$'$ (loss due to migration overhead) is not tested yet, since it requires a tiering system.
+
+\subsection{E2: Slowdown Predictors (Preliminary)}
+Our goal is to reproduce the following results. We must measure slowdown vs all on DRAM of our workloads, and find the right endogenous quantity to explain this slowdown, ie a quantity with the highest Pearson correlation coefficient. We would first measure $\frac{\text{LLC\_stalls}}{\text{cycle}}$, compute the Pearson correlation coefficient, then do the same for $K(\text{AOL})\frac{\text{LLC\_stalls}}{\text{cycle}}$. $K$ links the extra LLC stalls on the slow tier to the LLC stalls on the fast tier (the paper argues that the LLC stalls on the slow tier are proportional to the LLC stalls on the fast tier). $K$ is not a constant but a function of AOL, $K = 1/(a + b/\text{AOL})$, where $a$ and $b$ are calibrated with microbenchmarks (Figure~\ref{fig:aol}).
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.5\textwidth]{figures/AOL_tuning.png}
+  \caption{AOL tuning, reproduced from Liu et al.\ (OSDI 2025).}
+  \label{fig:aol}
+\end{figure}
+
+ We derive the following metrics from the counters, with:
+
+ \begin{itemize}
+     \item $O$ = \path{offcore_requests_outstanding.demand_data_rd}
+     \item $C$ = \path{offcore_requests_outstanding.cycles_with_demand_data_rd}
+     \item $N$ = \path{offcore_requests.demand_data_rd}
+ \end{itemize}
+
+ \begin{itemize}
+     \item Average latency (cycles per request): $\text{Latency} = \frac{O}{N}$
+     \item Average MLP: $\text{MLP} = \frac{O}{C}$
+     \item $\text{AOL} = \frac{\text{Latency}}{\text{MLP}} = \frac{C}{N}$
+     \item Stall ratio $P = \frac{\text{cycle\_activity.stalls\_l2\_pending}}{\text{cycles}}$
+ \end{itemize}
+
+ The counter $O$ returns inconsistent values on this machine. Since $O$ cancels out in AOL, we compute AOL directly as $C/N$, but we cannot measure the latency and the MLP separately.
+
+ The first measurements cover the microbenchmark and four GAPBS workloads (bc, bfs, pr, cc). Their slowdowns range only from $+29\%$ to $+37\%$, which is too narrow to compare predictors, so we will add workloads with more varied MLP before computing the correlations.
+
 
 \subsection{SOAR: Feasibility}
-\todo{What the authors' artifact requires, what is needed to run it on our
-machine, and any first result.}
+SOAR itself runs on the stock kernel: its profiling relies on PEBS memory sampling, and we checked that \texttt{perf record -d} works on the machine. The baselines of E3 are different: TPP, NBT, Nomad and Colloid each require a specific kernel, so the kernel will have to be changed for each strategy, which needs the approval of the teaching team. The measurements will be made one strategy after the other, and repeated 10 times to make a statistical analysis.
+
 
 % =====================================================================
 \section{Challenges}
 
 \subsection{Hardware Differences}
-\todo{Challenges coming from the CPU and its counters.}
+The CPUs and counters are not all the same. The LLC-stall event does not exist on Haswell, so we use \path{cycle_activity.stalls_l2_pending}, which overestimates $P$. The outstanding-requests counter is unreliable, so we only use AOL $= C/N$.
 
 \subsection{Tiered Memory Emulation and Baselines}
-\todo{Challenges with the slow tier, memory tiers and custom kernels.}
+There is no CXL memory implemented in the server. Hence, we emulate it with the second NUMA node: threads run on node~0 and the slow-tier data is allocated on node~1. This tier is only about $1.5\times$ slower than local DRAM. Making it slower would require lowering the uncore frequency of node~1, which needs changes on the machine that we have not made yet. The baselines also require custom kernels (Section~3.4).
 
 \subsection{Authors' Artifact}
-\todo{Challenges in porting the code.}
+The author's benchmark code runs without difficulty. We modified the microbenchmark to pin the threads, allocate the data of each thread on a chosen node, and time each thread separately.
 
 \subsection{Help Needed from the Teaching Team}
-\todo{Concrete requests.}
+\begin{itemize}
+    \item Can we lower the uncore frequency of node~1 (through the \texttt{msr} module) to make the slow tier slower?
+    \item Can we install custom kernels on the machine for the E3 baselines?
+    \item Is there a way to get access to existing hardware of PolyRack, or emulate it? For emulation, we thought about simulating slowdowns depending on CPU placements on the rack.
+\end{itemize}
 
 % =====================================================================
 \section{Plan}
-\todo{Say whether the project is on schedule with respect to the proposal.}
+We are a little bit late on the milestones: E1 is done except for the test of H1$'$, and the data collection for E2 has started. The main risks are the emulation of the slow tier and the kernels for the baselines, which depend on the answers of the teaching team (Section~4.4).
 
 \begin{table}[h]
 \centering
@@ -172,10 +300,10 @@ machine, and any first result.}
 \toprule
 Date & Milestone & Status \\
 \midrule
-\todo{date} & \todo{E2 completed} & \todo{--} \\
-\todo{date} & \todo{SOAR results} & \todo{--} \\
-Nov.~27 & \todo{E3 on selected workloads and ratios} & \todo{--} \\
-Dec.~4 & \todo{(if time permits) E4 on PolyRack} & \todo{--} \\
+Nov.~12 & Finish E1 & Done (H1$'$ pending) \\
+Nov.~19 & Finish E2 & Data collection started \\
+Nov.~27 & E3 on selected workloads and ratios & Not started \\
+Dec.~4 & If time permits E4 on PolyRack & Not started \\
 Dec.~10 & Poster deadline & \\
 Dec.~17 & Poster session & \\
 Dec.~20 & Final report deadline & \\

@@ -1,6 +1,6 @@
 """E1 figure: slowdown of each placement with respect to All-on-DRAM.
 
-Reads ../../e1_total.log (lines: "<config> <rep> <metric> <seconds>")
+Reads ../../e1.log (lines: "<config> <rep> <metric> <seconds>")
 and writes e1_slowdown.pdf next to this script.
 """
 import statistics as st
@@ -10,7 +10,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 HERE = Path(__file__).resolve().parent
-LOG = HERE.parent.parent / "e1_total.log"
+LOG = HERE.parent.parent / "e1.log"
 
 BLUE, ORANGE = "#2a78d6", "#eb6834"  # categorical slots 1-2 (validated)
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
