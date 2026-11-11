@@ -83,7 +83,6 @@ We launched basic commands on the remote server to fully characterize it. The re
   \item There are 2 NUMA nodes, each having 126\,GB of memory. 
   \item The Kernel is an Ubuntu \texttt{6.8.0-147-generic} Kernel.
   \item Single memory tier (\texttt{memory\_tier4}, nodes 0-1). 
-  \item DDR4 1600/1866/2133 memories
   \item Total memory of about 252\,GB ($2 \times 126$\,GB)
 \end{itemize}
 
@@ -107,7 +106,7 @@ In the paper, they used the following counters to track AOL. LLC stands for Last
 \end{itemize}
 
 
- We now compare our machine with theirs. The CPUs are not the same, and this has two consequences. First, the machine has no CXL memory expander, and it does not expose an uncore-frequency driver, so we cannot slow down a node as the authors did on Skylake. Our slow tier is simply the remote NUMA node (node~1), which is only about $1.5\times$ slower than local DRAM (Section~3.1), against about $2.1\times$ for the paper's emulated tier. We therefore expect smaller slowdowns than in the paper. Second, we have more threads available (48 in total, instead of 8), but we can limit them with thread pinning.
+ We now compare our machine with theirs. The CPUs are not the same, and this has two consequences. First, the machine has no CXL memory expander, and it does not expose an uncore-frequency driver, so we cannot slow down a node as the authors did on Skylake. Our slow tier is simply the remote NUMA node (node~1), which is only about $1.5\times$ slower than local DRAM (Section~3.1), against about $2.1\times$ for the paper's emulated tier. We therefore expect smaller slowdowns than in the paper. Second, our machine has 48 hardware threads; as in the paper, we limit the workloads to 8 threads with thread pinning.
 
  We also noticed that we did not have all counters at hand. Hence, we need to make following modifications:
 
@@ -268,7 +267,7 @@ Our goal is to reproduce the following results. We must measure slowdown vs all 
 
 
 \subsection{SOAR: Feasibility}
-SOAR itself runs on the stock kernel: its profiling relies on PEBS memory sampling, and we checked that \texttt{perf record -d} works on the machine. The baselines of E3 are different: TPP, NBT, Nomad and Colloid each require a specific kernel, so the kernel will have to be changed for each strategy, which needs the approval of the teaching team. The measurements will be made one strategy after the other, and repeated 10 times to make a statistical analysis.
+SOAR's profiling should run on the stock kernel: it relies on PEBS memory sampling, and we checked that \texttt{perf record -d} works on the machine. The rest of the SOAR pipeline has not been run yet. The baselines of E3 are different: TPP, NBT, Nomad and Colloid each require a specific kernel, so the kernel will have to be changed for each strategy, which needs the approval of the teaching team. The measurements will be made one strategy after the other, and repeated 10 times to make a statistical analysis.
 
 
 % =====================================================================
@@ -281,7 +280,7 @@ The CPUs and counters are not all the same. The LLC-stall event does not exist o
 There is no CXL memory implemented in the server. Hence, we emulate it with the second NUMA node: threads run on node~0 and the slow-tier data is allocated on node~1. This tier is only about $1.5\times$ slower than local DRAM. Making it slower would require lowering the uncore frequency of node~1, which needs changes on the machine that we have not made yet. The baselines also require custom kernels (Section~3.4).
 
 \subsection{Authors' Artifact}
-The author's benchmark code runs without difficulty. We modified the microbenchmark to pin the threads, allocate the data of each thread on a chosen node, and time each thread separately.
+The authors' benchmark code builds and runs on our machine, but not without changes. We modified the microbenchmark to pin the threads, allocate the data of each thread on a chosen node, and time each thread separately.
 
 \subsection{Help Needed from the Teaching Team}
 \begin{itemize}
