@@ -1,14 +1,19 @@
-\documentclass[11pt,a4paper]{article}
+\documentclass[10pt,a4paper]{article}
 
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage[margin=2.5cm]{geometry}
+\usepackage[margin=2cm]{geometry}
 \usepackage{amsmath}
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{xcolor}
 \usepackage{url}
+\expandafter\def\expandafter\UrlBreaks\expandafter{\UrlBreaks\do\_}
 \usepackage{float}
+\usepackage[compact]{titlesec}
+\usepackage{enumitem}
+\setlist{nosep}
+\setcounter{tocdepth}{2}
 
 % Visible placeholder: remove every \todo before submitting.
 \newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
@@ -33,7 +38,6 @@ EPFL\\
 \maketitle
 
 \tableofcontents
-\newpage
 
 % =====================================================================
 \section{Research Problem}
@@ -94,16 +98,6 @@ The machines used for the experiments in the paper were:
 \end{itemize}
 
 In their experiment, they used 8 threads, with memory bandwidth 2.3--21\,GB/s and RSS of 8--35\,GB. 
-
-In the paper, they used the following counters to track AOL. LLC stands for Last Level Cache. They refer to LLC stalls as CPU stalls caused by LLC misses.
-
-\begin{itemize}
-    \item Number of LLC stalls in L3 tier
-    \item Number of cycles
-    \item Cycles with pending requests
-    \item Number of pending requests per cycle
-    \item Number of requests to uncore
-\end{itemize}
 
 
  We now compare our machine with theirs. The CPUs are not the same, and this has two consequences. First, the machine has no CXL memory expander, and it does not expose an uncore-frequency driver, so we cannot slow down a node as the authors did on Skylake. Our slow tier is simply the remote NUMA node (node~1), which is only about $1.5\times$ slower than local DRAM (Section~3.1), against about $2.1\times$ for the paper's emulated tier. We therefore expect smaller slowdowns than in the paper. Second, our machine has 48 hardware threads; as in the paper, we limit the workloads to 8 threads with thread pinning.
@@ -241,25 +235,12 @@ Our goal is to reproduce the following results. We must measure slowdown vs all 
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.5\textwidth]{figures/AOL_tuning.png}
+  \includegraphics[width=\textwidth]{figures/AOL_tuning.png}
   \caption{AOL tuning, reproduced from Liu et al.\ (OSDI 2025).}
   \label{fig:aol}
 \end{figure}
 
- We derive the following metrics from the counters, with:
-
- \begin{itemize}
-     \item $O$ = \path{offcore_requests_outstanding.demand_data_rd}
-     \item $C$ = \path{offcore_requests_outstanding.cycles_with_demand_data_rd}
-     \item $N$ = \path{offcore_requests.demand_data_rd}
- \end{itemize}
-
- \begin{itemize}
-     \item Average latency (cycles per request): $\text{Latency} = \frac{O}{N}$
-     \item Average MLP: $\text{MLP} = \frac{O}{C}$
-     \item $\text{AOL} = \frac{\text{Latency}}{\text{MLP}} = \frac{C}{N}$
-     \item Stall ratio $P = \frac{\text{cycle\_activity.stalls\_l2\_pending}}{\text{cycles}}$
- \end{itemize}
+ We derive the following metrics from the counters, with $O$ = \path{offcore_requests_outstanding.demand_data_rd}, $C$ = \path{offcore_requests_outstanding.cycles_with_demand_data_rd} and $N$ = \path{offcore_requests.demand_data_rd}: average latency (cycles per request) $\text{Latency} = O/N$; average MLP $\text{MLP} = O/C$; $\text{AOL} = \text{Latency}/\text{MLP} = C/N$; stall ratio $P = \text{cycle\_activity.stalls\_l2\_pending}/\text{cycles}$.
 
  The counter $O$ returns inconsistent values on this machine. Since $O$ cancels out in AOL, we compute AOL directly as $C/N$, but we cannot measure the latency and the MLP separately.
 
@@ -293,8 +274,9 @@ The authors' benchmark code builds and runs on our machine, but not without chan
 \section{Plan}
 We are a little bit late on the milestones: E1 is done except for the test of H1$'$, and the data collection for E2 has started. The main risks are the emulation of the slow tier and the kernels for the baselines, which depend on the answers of the teaching team (Section~4.4).
 
-\begin{table}[h]
+\begin{table}[H]
 \centering
+\small
 \begin{tabular}{lll}
 \toprule
 Date & Milestone & Status \\
